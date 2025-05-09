@@ -6,6 +6,7 @@ import authStyles from '../styles/AuthStyles';
 import { Debts, Users } from '../data/Data';
 import { useAppwrite, APPWRITE} from '../contexts/AppwriteContext';
 import { ID, Query } from 'react-native-appwrite';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const AuthScreen = () => {
   const { account, databases, setUser, getCurrentUser } = useAppwrite();
@@ -13,17 +14,25 @@ const AuthScreen = () => {
   const [password, setPassword] = useState('');
   const [username, setUsername] = useState('');
   const [isLogin, setIsLogin] = useState(true);
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(true); // Змінюємо початковий стан на true
 
   useEffect(() => {
+    //setIsLoading(false);
     checkSession();
   }, []);
 
   const checkSession = async () => {
     try {
+      // Спочатку перевіряємо кешованого користувача
+      const cachedUser = await AsyncStorage.getItem('cachedUser');
+      if (cachedUser) {
+        router.replace('/(tabs)/HomeScreen');
+        return;
+      }
+
       const session = await account.get();
       if (session.$id) {
-        console.log('Login successful:', session.email, session.$id, session.name);
+        await getCurrentUser(); // Це тепер збереже користувача в кеш
         router.replace('/(tabs)/HomeScreen');
       }
     } catch (error) {
@@ -108,12 +117,9 @@ const AuthScreen = () => {
     }
   };
 
+  // Показуємо порожній екран під час завантаження
   if (isLoading) {
-    return (
-      <View style={[authStyles.container, { justifyContent: 'center' , alignItems: 'center'}]}>
-        <Text style={{fontSize: 30}}>Loading...</Text>
-      </View>
-    );
+    return <View style={{flex: 1, backgroundColor: '#fff'}} />
   }
 
   return (

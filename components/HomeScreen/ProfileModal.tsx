@@ -6,6 +6,7 @@ import { APPWRITE } from '../../contexts/AppwriteContext';
 import * as ImagePicker from 'expo-image-picker';
 import { ID } from 'react-native-appwrite';
 import { router } from 'expo-router';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 interface ProfileModalProps {
     visible: boolean;
@@ -57,12 +58,13 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ visible, onClose }) => {
     const handleLogout = async () => {
         try {
             await account.deleteSession('current');
+            await AsyncStorage.clear(); // Очищаємо весь кеш
             setUser(null);
             onClose();
-            router.replace('/'); // Redirect to index page
+            router.replace('/');
         } catch (error) {
             console.error('Error logging out:', error);
-            Alert.alert('Помилка', 'Не вдалося вийти з системи');
+            Alert.alert('Помилка', 'Не вдалося вийти з системи. Спробуйте ще раз.');
         }
     };
 
@@ -71,6 +73,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ visible, onClose }) => {
             visible={visible}
             animationType="slide"
             transparent={true}
+            onRequestClose={onClose}
         >
             <View style={styles.modalOverlay}>
                 <View style={styles.modalContent}>

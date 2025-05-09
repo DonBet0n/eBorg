@@ -2,7 +2,7 @@
   "expo": {
     "name": "eBorg",
     "slug": "eBorg",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "myapp",
@@ -16,7 +16,13 @@
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "softwareKeyboardLayoutMode": "pan"
+      "softwareKeyboardLayoutMode": "pan",
+      "package": "com.yaroslav24.eBorg",
+      "icon": "./assets/images/icon.png"
+    },
+    "androidStatusBar": {
+      "backgroundColor": "#ffffff",
+      "translucent": false
     },
     "web": {
       "bundler": "metro",
@@ -37,6 +43,14 @@
     ],
     "experiments": {
       "typedRoutes": true
+    },
+    "extra": {
+      "router": {
+        "origin": false
+      },
+      "eas": {
+        "projectId": "f0b5ef36-4e15-473a-b5f4-77b3317a1d4a"
+      }
     }
   }
 }

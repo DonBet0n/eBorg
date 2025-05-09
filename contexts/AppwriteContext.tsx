@@ -1,5 +1,6 @@
-import { createContext, useContext, useState } from 'react';
+import { createContext, useContext, useState, useCallback } from 'react';
 import { Client, Account, Databases, Storage, Query } from 'react-native-appwrite';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { User } from '../types/debt';
 
 export const APPWRITE = {
@@ -34,6 +35,7 @@ export type AppwriteContextType = {
   setUser: (user: User | null) => void;
   getCurrentUser: () => Promise<User | null>;
   getUserDebts: () => Promise<any>;
+  logout: () => Promise<void>;
 };
 
 export const AppwriteContext = createContext<AppwriteContextType>({
@@ -45,47 +47,63 @@ export const AppwriteContext = createContext<AppwriteContextType>({
   setUser: () => {},
   getCurrentUser: async () => null,
   getUserDebts: async () => null,
+  logout: async () => {},
 });
 
-export const AppwriteProvider = ({ children }: { children: React.ReactNode }) => {
+export function AppwriteProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
+  const client = new Client();
+  const account = new Account(client);
+  const databases = new Databases(client);
 
-  const getCurrentUser = async () => {
+  client
+    .setEndpoint(APPWRITE.endpoint)
+    .setProject(APPWRITE.project);
+
+  const getCurrentUser = useCallback(async () => {
     try {
-      // Перевіряємо наявну сесію
-      const session = await account.get();
-      if (!session?.$id) {
-        setUser(null);
-        return null;
+      const cachedUser = await AsyncStorage.getItem('cachedUser');
+      if (cachedUser) {
+        const userData = JSON.parse(cachedUser);
+        setUser(userData);
+        return userData;
       }
 
-      // Отримуємо дані користувача
-      const userData = await databases.getDocument(
+      const currentAccount = await account.get();
+      if (!currentAccount) return null;
+
+      const userDoc = await databases.getDocument(
         APPWRITE.databases.main,
         APPWRITE.databases.collections.users,
-        session.$id
+        currentAccount.$id
       );
 
-      if (!userData?.$id) {
-        throw new Error('User data not found');
-      }
-
-      const user: User = {
-        id: userData.$id,
-        name: userData.name || '',
-        email: userData.email || '',
-        secondName: userData.secondName || '',
-        avatar: userData.avatar,
+      const userData = {
+        id: currentAccount.$id,
+        email: currentAccount.email,
+        name: userDoc.name,
+        secondName: userDoc.secondName,
+        avatar: userDoc.avatar,
       };
-      
-      setUser(user);
-      return user;
+
+      await AsyncStorage.setItem('cachedUser', JSON.stringify(userData));
+      setUser(userData);
+      return userData;
     } catch (error) {
       console.error('Error getting current user:', error);
-      setUser(null);
       return null;
     }
-  };
+  }, [account, databases]);
+
+  const logout = useCallback(async () => {
+    try {
+      await account.deleteSession('current');
+      await AsyncStorage.removeItem('cachedUser');
+      setUser(null);
+    } catch (error) {
+      console.error('Error logging out:', error);
+    }
+  }, [account]);
 
   const getUserDebts = async () => {
     try {
@@ -190,12 +208,13 @@ export const AppwriteProvider = ({ children }: { children: React.ReactNode }) =>
       user,
       setUser,
       getCurrentUser,
-      getUserDebts
+      getUserDebts,
+      logout
     }}>
       {children}
     </AppwriteContext.Provider>
   );
-};
+}
 
 export const useAppwrite = () => useContext(AppwriteContext);
 
