@@ -1,6 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Animated, GestureResponderEvent, Modal, TextInput } from 'react-native';
 import { Debt } from '../../types/debt';
+import { formatAmount } from '../../utils/debtCalculations';
 
 interface DebtCardProps {
     id: string;
@@ -173,7 +174,7 @@ const DebtCard: React.FC<DebtCardProps> = ({
             { color: totalAmount === 0 ? '#666' : 
                      totalAmount > 0 ? '#4CAF50' : '#E53935' }
           ]}>
-            {totalAmount > 0 ? '+' : ''}{totalAmount} грн
+            {totalAmount > 0 ? '+' : ''}{formatAmount(totalAmount)} грн
           </Text>
         </View>
         
@@ -200,8 +201,8 @@ const DebtCard: React.FC<DebtCardProps> = ({
                   )
                 ]}>
                   {group.isPayment 
-                    ? `${Math.abs(group.totalAmount)} грн`
-                    : `${group.totalAmount > 0 ? '+' : ''}${group.totalAmount} грн`
+                    ? `${formatAmount(Math.abs(group.totalAmount))} грн`
+                    : `${group.totalAmount > 0 ? '+' : ''}${formatAmount(group.totalAmount)} грн`
                   }
                 </Text>
               </View>
@@ -251,7 +252,7 @@ const DebtCard: React.FC<DebtCardProps> = ({
           <View style={styles.modalContent}>
             <Text style={styles.modalTitle}>Оплата боргу</Text>
             <Text style={styles.modalSubtitle}>
-              Загальний борг: {Math.abs(totalAmount)} грн
+              Загальний борг: {formatAmount(Math.abs(totalAmount))} грн
             </Text>
 
             <View style={styles.inputContainer}>

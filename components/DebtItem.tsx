@@ -59,10 +59,25 @@ const DebtItemComponent = forwardRef<{focusDescription: () => void}, DebtItemCom
                     style={styles.debtItemNumberInput}
                     value={num === '0' ? '' : num}
                     placeholder="Сума"
-                    keyboardType="numeric"
-                    onChangeText={onNumChange}
+                    keyboardType="decimal-pad"
+                    onChangeText={(value) => {
+                        // Спочатку замінюємо коми на крапки
+                        let formattedValue = value.replace(',', '.');
+                        
+                        // Видаляємо все крім цифр та першої крапки
+                        const [beforeDot, ...afterDot] = formattedValue.split('.');
+                        formattedValue = beforeDot.replace(/[^\d]/g, '');
+                        
+                        // Додаємо крапку та цифри після неї, якщо вони є
+                        if (afterDot.length > 0) {
+                            formattedValue += '.' + afterDot.join('').replace(/[^\d]/g, '').slice(0, 2);
+                        } else if (value.endsWith('.')) {
+                            formattedValue += '.';
+                        }
+                        
+                        onNumChange(formattedValue);
+                    }}
                     onSubmitEditing={handleAmountSubmit}
-                    selection={num === '0' ? { start: 0, end: 0 } : undefined}
                 />
                 <TouchableOpacity 
                     onPress={onDelete} 

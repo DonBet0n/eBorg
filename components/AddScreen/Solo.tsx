@@ -13,7 +13,7 @@ interface SoloTabProps {
 const SoloTab: React.FC<SoloTabProps> = ({ userList }) => {
     const { databases } = useAppwrite();
     const [isUserListModalVisible, setUserListModalVisible] = useState(false);
-    const [debtItemsSolo, setDebtItemsSolo] = useState<DebtItem[]>([{ id: '1', text: '', num: 0 }]);
+    const [debtItemsSolo, setDebtItemsSolo] = useState<DebtItem[]>([{ id: '1', text: '', num: '0' }]);
     const [selectedUserSolo1, setSelectedUserSolo1] = useState<User | null>(null);
     const [selectedUserSolo2, setSelectedUserSolo2] = useState<User | null>(null);
     const [currentUserSelectorSolo, setCurrentUserSelectorSolo] = useState<'user1' | 'user2' | null>(null);
@@ -57,11 +57,14 @@ const SoloTab: React.FC<SoloTabProps> = ({ userList }) => {
 
 
     const calculateTotalSolo = useCallback(() => {
-        return debtItemsSolo.reduce((sum, item) => sum + Number(item.num || 0), 0);
+        return debtItemsSolo.reduce((sum, item) => {
+            const num = parseFloat(item.num) || 0;
+            return sum + num;
+        }, 0);
     }, [debtItemsSolo]);
 
     const addDebtItemSolo = useCallback(() => {
-        setDebtItemsSolo(prevItems => [...prevItems, { id: String(Date.now()), text: '', num: 0 }]);
+        setDebtItemsSolo(prevItems => [...prevItems, { id: String(Date.now()), text: '', num: '0' }]);
         setTimeout(() => {
             lastItemRef.current?.focusDescription();
         }, 100);
@@ -75,11 +78,6 @@ const SoloTab: React.FC<SoloTabProps> = ({ userList }) => {
         setDebtItemsSolo(prevItems =>
             prevItems.map(item => {
                 if (item.id === id) {
-                    if (field === 'num') {
-                        // If value is empty string, set to 0
-                        const numValue = value === '' ? 0 : Number(value) || 0;
-                        return { ...item, [field]: numValue };
-                    }
                     return { ...item, [field]: value };
                 }
                 return item;
@@ -119,7 +117,7 @@ const SoloTab: React.FC<SoloTabProps> = ({ userList }) => {
             console.log('Створено борги з group ID:', deptId);
             
             // Reset form after successful creation
-            setDebtItemsSolo([{ id: '1', text: '', num: 0 }]);
+            setDebtItemsSolo([{ id: '1', text: '', num: '0' }]);
             setSelectedUserSolo1(null);
             setSelectedUserSolo2(null);
 
@@ -213,7 +211,7 @@ const SoloTab: React.FC<SoloTabProps> = ({ userList }) => {
                         ref={index === debtItemsSolo.length - 1 ? lastItemRef : null}
                         id={item.id}
                         text={item.text}
-                        num={item.num.toString()} // Convert number to string for the component
+                        num={item.num.toString()}
                         onTextChange={(text) => updateDebtItemSolo(item.id, 'text', text)}
                         onNumChange={(num) => updateDebtItemSolo(item.id, 'num', num)}
                         onDelete={() => deleteDebtItemSolo(item.id)}

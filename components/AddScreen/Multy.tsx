@@ -14,7 +14,7 @@ const MultyTab: React.FC<MultyTabProps> = ({ userList }) => {
     const { databases } = useAppwrite();
     const [isUserListModalVisible, setUserListModalVisible] = useState(false);
     const [selectedUsersMulty, setSelectedUsersMulty] = useState<User[]>([]);
-    const [totalItemsMulty, setTotalItemsMulty] = useState<DebtItem[]>([{ id: 'totalItem1', text: '', num: 0 }]);
+    const [totalItemsMulty, setTotalItemsMulty] = useState<DebtItem[]>([{ id: 'totalItem1', text: '', num: '0' }]);
     const [userItemsMulty, setUserItemsMulty] = useState<{ [userId: string]: DebtItem[] }>({});
     const [isTotalDropdownOpen, setTotalDropdownOpen] = useState(false);
     const [userDropdownOpen, setUserDropdownOpen] = useState<{ [key: string]: boolean }>({});
@@ -24,13 +24,13 @@ const MultyTab: React.FC<MultyTabProps> = ({ userList }) => {
     const lastItemRef = useRef<{ focusDescription: () => void }>(null);
 
     const addTotalItemMulty = useCallback(() => {
-        setTotalItemsMulty(prevItems => [...prevItems, { id: String(Date.now()), text: '', num: 0 }]);
+        setTotalItemsMulty(prevItems => [...prevItems, { id: String(Date.now()), text: '', num: '0' }]);
     }, []);
 
     const addUserItemMulty = useCallback((userId: string) => {
         setUserItemsMulty(prevUserItems => ({
             ...prevUserItems,
-            [userId]: [...(prevUserItems[userId] || []), { id: String(Date.now()), text: '', num: 0 }]
+            [userId]: [...(prevUserItems[userId] || []), { id: String(Date.now()), text: '', num: '0' }]
         }));
     }, []);
 
@@ -68,7 +68,7 @@ const MultyTab: React.FC<MultyTabProps> = ({ userList }) => {
     const isUserSelected = useCallback((user: User) => selectedUsersMulty.some(u => u.id === user.id), [selectedUsersMulty]);
 
     const calculateSummaryForUser = useCallback((userId: string) => {
-        return (userItemsMulty[userId] || []).reduce((sum, item) => sum + item.num, 0);
+        return (userItemsMulty[userId] || []).reduce((sum, item) => sum + (parseFloat(item.num) || 0), 0);
     }, [userItemsMulty]);
 
     const calculateDebtForUser = useCallback((user: User) => {
@@ -80,7 +80,7 @@ const MultyTab: React.FC<MultyTabProps> = ({ userList }) => {
         }
         
         // Спільні витрати поділені на ВСІХ учасників (включаючи отримувача)
-        const totalSharedAmount = totalItemsMulty.reduce((sum, item) => sum + item.num, 0);
+        const totalSharedAmount = totalItemsMulty.reduce((sum, item) => sum + (parseFloat(item.num) || 0), 0);
         const perUserShare = totalSharedAmount / selectedUsersMulty.length;
         
         // Персональні витрати користувача
@@ -90,7 +90,10 @@ const MultyTab: React.FC<MultyTabProps> = ({ userList }) => {
     }, [totalItemsMulty, selectedUsersMulty, calculateSummaryForUser, debtReceiverUser]);
 
     const calculateTotalMulty = useCallback(() => {
-        return totalItemsMulty.reduce((sum, item) => sum + item.num, 0);
+        return totalItemsMulty.reduce((sum, item) => {
+            const num = parseFloat(item.num) || 0;
+            return sum + num;
+        }, 0);
     }, [totalItemsMulty]);
 
     // Тепер perUserShare показує поділ на всіх учасників
@@ -102,8 +105,7 @@ const MultyTab: React.FC<MultyTabProps> = ({ userList }) => {
         setTotalItemsMulty(prevItems =>
             prevItems.map((item, i) => {
                 if (i === index) {
-                    const updatedValue = field === 'num' ? Number(value) || 0 : value;
-                    return { ...item, [field]: updatedValue };
+                    return { ...item, [field]: value };
                 }
                 return item;
             })
@@ -119,8 +121,7 @@ const MultyTab: React.FC<MultyTabProps> = ({ userList }) => {
             const userItems = prevUserItems[userId] || [];
             const updatedUserItems = userItems.map((item, i) => {
                 if (i === index) {
-                    const updatedValue = field === 'num' ? Number(value) || 0 : value;
-                    return { ...item, [field]: updatedValue };
+                    return { ...item, [field]: value };
                 }
                 return item;
             });
@@ -212,7 +213,7 @@ const MultyTab: React.FC<MultyTabProps> = ({ userList }) => {
             console.log('Створено групові борги з ID:', deptId);
 
             // Reset form
-            setTotalItemsMulty([{ id: 'totalItem1', text: '', num: 0 }]);
+            setTotalItemsMulty([{ id: 'totalItem1', text: '', num: '0' }]);
             setUserItemsMulty({});
             setSelectedUsersMulty([]);
             setDebtReceiverUser(null);
@@ -357,7 +358,7 @@ const MultyTab: React.FC<MultyTabProps> = ({ userList }) => {
                         />
                     </View>
                     <View style={styles.summaryDebtContainer}>
-                        <Text style={styles.multySummaryText}>Загальна сума: {calculateTotalMulty()}</Text>
+                        <Text style={styles.multySummaryText}>Загальна сума: {calculateTotalMulty().toFixed(2)}</Text>
                         {selectedUsersMulty.length > 0 && (
                             <Text style={styles.multyDebtText}>Поділ: {perUserShare.toFixed(2)} на кожного</Text>
                         )}
@@ -394,7 +395,7 @@ const MultyTab: React.FC<MultyTabProps> = ({ userList }) => {
                             if (!userItemsMulty[user.id]) {
                                 setUserItemsMulty(prev => ({
                                     ...prev,
-                                    [user.id]: [{ id: String(Date.now()), text: '', num: 0 }]
+                                    [user.id]: [{ id: String(Date.now()), text: '', num: '0' }]
                                 }));
                             }
                         }}

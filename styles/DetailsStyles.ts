@@ -124,6 +124,7 @@ const detailsStyles = StyleSheet.create({
     marginBottom: 8,
     borderWidth: 1,
     borderColor: '#E0E0E0',
+    
   },
   modalGroupHeader: {
     flexDirection: 'row',

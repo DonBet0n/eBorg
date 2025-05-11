@@ -24,6 +24,10 @@ export const calculateDebts = (debts: any[], currentUserId: string): Statistics 
     return statistics;
 };
 
+export const formatAmount = (amount: number): number => {
+  return Number(amount.toFixed(2));
+};
+
 export const formatCurrency = (amount: number): string => {
-    return `${amount.toFixed(2)} грн`;
+  return formatAmount(amount).toString();
 };

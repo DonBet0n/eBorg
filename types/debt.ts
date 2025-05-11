@@ -19,7 +19,7 @@ export interface Debt {
 export interface DebtItem {
     id: string;
     text: string;
-    num: number;
+    num: string; // змінюємо тип на string для підтримки введення
 }
 
 export interface Statistics {

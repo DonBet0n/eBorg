@@ -7,6 +7,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { Debt } from '../../types/debt';
 import { ID } from 'react-native-appwrite';
 import { MaterialIcons } from '@expo/vector-icons';
+import { formatAmount } from '../../utils/debtCalculations';
 
 const DetailsScreen = () => {
   const [debts, setDebts] = useState<any[]>([]);
@@ -190,7 +191,7 @@ const DetailsScreen = () => {
             </Text>
             <View style={detailsStyles.modalItemInfo}>
               <Text style={[detailsStyles.modalItemAmount, detailsStyles.paymentAmount]}>
-                {Math.abs(group.totalAmount)} грн
+                {formatAmount(Math.abs(group.totalAmount))} грн
               </Text>
               <Text style={detailsStyles.modalItemDate}>
                 {new Date(group.date).toLocaleDateString()}
@@ -222,7 +223,7 @@ const DetailsScreen = () => {
             detailsStyles.modalGroupTotal,
             { color: group.totalAmount >= 0 ? '#4CAF50' : '#E53935' }
           ]}>
-            {group.totalAmount > 0 ? '+' : ''}{group.totalAmount} грн
+            {group.totalAmount > 0 ? '+' : ''}{formatAmount(group.totalAmount)} грн
           </Text>
         </TouchableOpacity>
         {expandedGroups[`${groupIndex}`] && (
@@ -310,7 +311,7 @@ const DetailsScreen = () => {
                 { color: selectedDebt?.totalAmount === 0 ? '#666' : 
                          selectedDebt?.totalAmount > 0 ? '#4CAF50' : '#E53935' }
               ]}>
-                {selectedDebt?.totalAmount > 0 ? '+' : ''}{selectedDebt?.totalAmount} грн
+                {selectedDebt?.totalAmount > 0 ? '+' : ''}{selectedDebt?.totalAmount ? formatAmount(selectedDebt.totalAmount) : 0} грн
               </Text>
             </View>
             

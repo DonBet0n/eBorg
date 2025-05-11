@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Image } from 'rea
 import { MaterialIcons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import ProfileModal from '../../components/HomeScreen/ProfileModal';
-import { calculateDebts, formatCurrency } from '../../utils/debtCalculations';
+import { calculateDebts, formatCurrency, formatAmount } from '../../utils/debtCalculations';
 import { APPWRITE } from '../../contexts/AppwriteContext';
 import { useAppwrite } from '../../contexts/AppwriteContext';
 import { Statistics, Debt } from '../../types/debt';
@@ -115,11 +115,15 @@ const HomeScreen = () => {
           <Text style={styles.sectionTitle}>Статистика боргів</Text>
           <View style={styles.statisticsGrid}>
             <View style={[styles.statisticItem, styles.incomingDebt]}>
-              <Text style={[styles.statisticValue, styles.positiveText]}>+{statistics.incomingDebts} грн</Text>
+              <Text style={[styles.statisticValue, styles.positiveText]}>
+                +{formatAmount(statistics.incomingDebts)} грн
+              </Text>
               <Text style={styles.statisticLabel}>Вам винні</Text>
             </View>
             <View style={[styles.statisticItem, styles.outgoingDebt]}>
-              <Text style={[styles.statisticValue, styles.negativeText]}>-{statistics.outgoingDebts} грн</Text>
+              <Text style={[styles.statisticValue, styles.negativeText]}>
+                -{formatAmount(statistics.outgoingDebts)} грн
+              </Text>
               <Text style={styles.statisticLabel}>Ви винні</Text>
             </View>
             <View style={styles.statisticItem}>
