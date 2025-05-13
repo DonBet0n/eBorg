@@ -10,7 +10,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { formatAmount } from '../../utils/debtCalculations';
 
 const DetailsScreen = () => {
-  const { getUserDebts, user, databases, debts, refreshDebts } = useAppwrite();
+  const { getUserDebts, user, databases, debts, refreshDebts, lastUpdate } = useAppwrite();
   const [selectedDebt, setSelectedDebt] = useState<any>(null);
   const [modalVisible, setModalVisible] = useState(false);
   const [isRejectionMode, setIsRejectionMode] = useState(false);
@@ -26,8 +26,8 @@ const DetailsScreen = () => {
 
   useFocusEffect(
     React.useCallback(() => {
-      refreshDebts(); // Тільки перевіряємо необхідність оновлення
-    }, [])
+      refreshDebts();
+    }, [refreshDebts])
   );
 
   const groupDebtsByDate = (items: any[]) => {
@@ -98,7 +98,6 @@ const DetailsScreen = () => {
 
   const handleRejectItems = async () => {
     try {
-      // Видаляємо кожен вибраний елемент з бази даних
       const deletePromises = selectedItems.map(itemId =>
         databases.deleteDocument(
           APPWRITE.databases.main,
@@ -110,10 +109,9 @@ const DetailsScreen = () => {
       await Promise.all(deletePromises);
       setModalVisible(false);
       setSelectedItems([]);
-      await refreshDebts(); // Використовуємо refreshDebts замість loadDebts
+      await refreshDebts(); // This will update all screens
     } catch (error) {
       console.error('Error rejecting items:', error);
-      // Тут можна додати відображення помилки користувачу
     }
   };
 
@@ -141,7 +139,7 @@ const DetailsScreen = () => {
         }
       );
 
-      await refreshDebts(); // Використовуємо refreshDebts замість loadDebts
+      await refreshDebts(); // This will update all screens
     } catch (error) {
       console.error('Error paying debt:', error);
     }

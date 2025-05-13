@@ -1,10 +1,11 @@
-import React, { useState, useCallback, useRef } from 'react';
-import { StyleSheet, Text, View, TouchableOpacity, FlatList, TextInput, Modal, ScrollView } from 'react-native';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
+import { StyleSheet, Text, View, TouchableOpacity, FlatList, TextInput, Modal, ScrollView, Animated } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import DebtItemComponent from '../../components/DebtItem';
 import { User, DebtItem } from '../../types/debt';
 import { useAppwrite, APPWRITE } from '../../contexts/AppwriteContext';
 import { ID } from 'react-native-appwrite';
+import ConfirmDebtModal from './ConfirmDebtModal';
 
 interface MultyTabProps {
     userList: User[];
@@ -20,6 +21,10 @@ const MultyTab: React.FC<MultyTabProps> = ({ userList }) => {
     const [userDropdownOpen, setUserDropdownOpen] = useState<{ [key: string]: boolean }>({});
     const [debtReceiverUser, setDebtReceiverUser] = useState<User | null>(null);
     const inputRefs = useRef<{ [key: string]: TextInput | null }>({});
+    const [confirmModalVisible, setConfirmModalVisible] = useState(false);
+    const [isSuccess, setIsSuccess] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+    const fadeAnim = useRef(new Animated.Value(0)).current;
 
     const lastItemRef = useRef<{ focusDescription: () => void }>(null);
 
@@ -137,7 +142,55 @@ const MultyTab: React.FC<MultyTabProps> = ({ userList }) => {
         });
     }, []);
 
+    const showError = (message: string) => {
+        setError(message);
+        Animated.sequence([
+            Animated.timing(fadeAnim, {
+                toValue: 1,
+                duration: 300,
+                useNativeDriver: true,
+            }),
+            Animated.delay(3000),
+            Animated.timing(fadeAnim, {
+                toValue: 0,
+                duration: 300,
+                useNativeDriver: true,
+            })
+        ]).start(() => setError(null));
+    };
+
+    const validateDebtItems = () => {
+        if (!debtReceiverUser || selectedUsersMulty.length === 0) {
+            showError('Виберіть отримувача та учасників');
+            return false;
+        }
+    
+        const hasEmptyAmount = totalItemsMulty.some(item => 
+            !item.num || Number(item.num) === 0
+        );
+    
+        // Перевіряємо тільки ті елементи, що існують
+        const hasEmptyUserAmount = Object.values(userItemsMulty).some(items =>
+            items && items.length > 0 && items.some(item => !item.num || Number(item.num) === 0)
+        );
+    
+        if (hasEmptyAmount || hasEmptyUserAmount) {
+            showError('Видаліть елементи з нульовою сумою');
+            return false;
+        }
+    
+        return true;
+    };
+
     const handleCreateDebtMulty = useCallback(async () => {
+        setError(null); // Clear previous error
+        if (!validateDebtItems()) return;
+        
+        setConfirmModalVisible(true);
+    }, [validateDebtItems]);
+
+    const confirmDebtCreation = async () => {
+        setError(null); // Clear error on success
         if (!debtReceiverUser || selectedUsersMulty.length === 0) return;
         
         const deptId = ID.unique();
@@ -212,16 +265,22 @@ const MultyTab: React.FC<MultyTabProps> = ({ userList }) => {
             await Promise.all(debtPromises);
             console.log('Створено групові борги з ID:', deptId);
 
-            // Reset form
-            setTotalItemsMulty([{ id: 'totalItem1', text: '', num: '0' }]);
-            setUserItemsMulty({});
-            setSelectedUsersMulty([]);
-            setDebtReceiverUser(null);
+            setIsSuccess(true);
+            setTimeout(() => {
+                setIsSuccess(false);
+                setConfirmModalVisible(false);
+                // Reset form
+                setTotalItemsMulty([{ id: 'totalItem1', text: '', num: '0' }]);
+                setUserItemsMulty({});
+                setSelectedUsersMulty([]);
+                setDebtReceiverUser(null);
+            }, 2000);
 
         } catch (error) {
             console.error('Error creating multy debts:', error);
+            setError('Помилка при створенні боргу');
         }
-    }, [debtReceiverUser, selectedUsersMulty, totalItemsMulty, userItemsMulty, databases]);
+    };
 
     const toggleTotalDropdown = useCallback(() => {
         setTotalDropdownOpen(prev => !prev);
@@ -296,6 +355,7 @@ const MultyTab: React.FC<MultyTabProps> = ({ userList }) => {
                         : 'Всі користувачі'}
                 </Text>
             </TouchableOpacity>
+
 
 
             {/* User List Modal with Checkboxes for Multy */}
@@ -391,13 +451,6 @@ const MultyTab: React.FC<MultyTabProps> = ({ userList }) => {
                         style={styles.multyUserRowHeader} 
                         onPress={() => {
                             toggleUserDropdown(user.id);
-                            // Ініціалізуємо масив боргів для користувача, якщо його ще немає
-                            if (!userItemsMulty[user.id]) {
-                                setUserItemsMulty(prev => ({
-                                    ...prev,
-                                    [user.id]: [{ id: String(Date.now()), text: '', num: '0' }]
-                                }));
-                            }
                         }}
                     >
                         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -415,21 +468,33 @@ const MultyTab: React.FC<MultyTabProps> = ({ userList }) => {
                     </TouchableOpacity>
                     {userDropdownOpen[user.id] && (
                         <ScrollView nestedScrollEnabled={true} style={{maxHeight: 300}}>
-                            {(userItemsMulty[user.id] || []).map((item, index) => (
-                                <DebtItemComponent
-                                    ref={index === (userItemsMulty[user.id] || []).length - 1 ? lastItemRef : null}
-                                    key={item.id}
-                                    id={item.id}
-                                    text={item.text}
-                                    num={item.num.toString()}
-                                    onTextChange={(text) => updateUserItemMulty(user.id, index, 'text', text)}
-                                    onNumChange={(num) => updateUserItemMulty(user.id, index, 'num', num)}
-                                    onDelete={() => deleteUserItemMulty(user.id, index)}
-                                    isLast={index === (userItemsMulty[user.id] || []).length - 1}
-                                    isOnly={(userItemsMulty[user.id] || []).length === 1}
-                                    onAdd={() => handleAddUserItem(user.id)}
-                                />
-                            ))}
+                            {/* Спочатку показуємо кнопку додавання, якщо немає елементів */}
+                            {(!userItemsMulty[user.id] || userItemsMulty[user.id].length === 0) ? (
+                                <TouchableOpacity 
+                                    style={styles.addFirstItemButton}
+                                    onPress={() => handleAddUserItem(user.id)}
+                                >
+                                    <MaterialIcons name="add" size={24} color="grey" />
+                                    <Text style={styles.addFirstItemText}>Додати персональний борг</Text>
+                                </TouchableOpacity>
+                            ) : (
+                                // Показуємо список елементів, якщо вони є
+                                (userItemsMulty[user.id] || []).map((item, index) => (
+                                    <DebtItemComponent
+                                        ref={index === (userItemsMulty[user.id] || []).length - 1 ? lastItemRef : null}
+                                        key={item.id}
+                                        id={item.id}
+                                        text={item.text}
+                                        num={item.num.toString()}
+                                        onTextChange={(text) => updateUserItemMulty(user.id, index, 'text', text)}
+                                        onNumChange={(num) => updateUserItemMulty(user.id, index, 'num', num)}
+                                        onDelete={() => deleteUserItemMulty(user.id, index)}
+                                        isLast={index === (userItemsMulty[user.id] || []).length - 1}
+                                        isOnly={(userItemsMulty[user.id] || []).length === 1}
+                                        onAdd={() => handleAddUserItem(user.id)}
+                                    />
+                                ))
+                            )}
                         </ScrollView>
                     )}
                 </View>
@@ -443,6 +508,32 @@ const MultyTab: React.FC<MultyTabProps> = ({ userList }) => {
             >
                 <Text style={styles.createButtonText}>Додати борг</Text>
             </TouchableOpacity>
+
+            <ConfirmDebtModal
+                visible={confirmModalVisible}
+                onClose={() => {
+                    setConfirmModalVisible(false);
+                    setIsSuccess(false);
+                }}
+                onConfirm={confirmDebtCreation}
+                debtInfo={debtReceiverUser ? {
+                    fromUser: selectedUsersMulty.map(u => u.name).join(', '),
+                    toUser: debtReceiverUser.name,
+                    totalAmount: calculateTotalMulty(),
+                    itemsCount: totalItemsMulty.length + 
+                        Object.values(userItemsMulty).reduce((acc, items) => acc + items.length, 0)
+                } : null}
+                isSuccess={isSuccess}
+            />
+
+            {error && (
+                <Animated.View style={[
+                    styles.errorContainer,
+                    { opacity: fadeAnim }
+                ]}>
+                    <Text style={styles.errorText}>{error}</Text>
+                </Animated.View>
+            )}
         </ScrollView>
     );
 };
@@ -576,6 +667,37 @@ const styles = StyleSheet.create({
         color: '#fff',
         fontSize: 16,
         fontFamily: 'MontserratBold',
+    },
+    errorContainer: {
+        backgroundColor: '#FFEBEE',
+        padding: 10,
+        borderRadius: 8,
+        marginBottom: 16,
+        borderWidth: 1,
+        borderColor: '#E53935',
+    },
+    errorText: {
+        color: '#E53935',
+        fontSize: 14,
+        fontFamily: 'Montserrat',
+        textAlign: 'center',
+    },
+    addFirstItemButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 15,
+        backgroundColor: '#F5F5F5',
+        borderRadius: 8,
+        borderWidth: 1,
+        borderColor: '#E0E0E0',
+        marginVertical: 10,
+    },
+    addFirstItemText: {
+        marginLeft: 8,
+        fontSize: 14,
+        color: '#666',
+        fontFamily: 'Montserrat',
     },
 });
 

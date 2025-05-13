@@ -1,10 +1,11 @@
-import React, { useState, useCallback, useRef } from 'react';
-import { StyleSheet, Text, View, TouchableOpacity, FlatList, TextInput, Modal, Vibration } from 'react-native';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
+import { StyleSheet, Text, View, TouchableOpacity, FlatList, TextInput, Modal, Vibration, Animated } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import DebtItemComponent from '../DebtItem';
 import { User, DebtItem, Debt } from '../../types/debt';
 import { useAppwrite, APPWRITE } from '../../contexts/AppwriteContext';
 import { ID } from 'react-native-appwrite';
+import ConfirmDebtModal from './ConfirmDebtModal';
 
 interface SoloTabProps {
     userList: User[];
@@ -18,6 +19,10 @@ const SoloTab: React.FC<SoloTabProps> = ({ userList }) => {
     const [selectedUserSolo2, setSelectedUserSolo2] = useState<User | null>(null);
     const [currentUserSelectorSolo, setCurrentUserSelectorSolo] = useState<'user1' | 'user2' | null>(null);
     const lastItemRef = useRef<{ focusDescription: () => void }>(null);
+    const [confirmModalVisible, setConfirmModalVisible] = useState(false);
+    const [isSuccess, setIsSuccess] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+    const fadeAnim = useRef(new Animated.Value(0)).current;
 
     // --- Функції Modal User List ---
     const openUserListModal = useCallback(() => {
@@ -85,23 +90,65 @@ const SoloTab: React.FC<SoloTabProps> = ({ userList }) => {
         );
     }, []);
 
+    const showError = (message: string) => {
+        setError(message);
+        Animated.sequence([
+            Animated.timing(fadeAnim, {
+                toValue: 1,
+                duration: 300,
+                useNativeDriver: true,
+            }),
+            Animated.delay(3000),
+            Animated.timing(fadeAnim, {
+                toValue: 0,
+                duration: 300,
+                useNativeDriver: true,
+            })
+        ]).start(() => setError(null));
+    };
+
+    const validateDebtItems = () => {
+        if (!selectedUserSolo1 || !selectedUserSolo2) {
+            showError('Виберіть користувачів');
+            return false;
+        }
+
+        const hasEmptyAmount = debtItemsSolo.some(item => 
+            !item.num || Number(item.num) === 0
+        );
+
+        if (hasEmptyAmount) {
+            showError('Видаліть елементи з нульовою сумою');
+            return false;
+        }
+
+        return true;
+    };
 
     const handleCreateDebtSolo = useCallback(async () => {
+        setError(null); // Clear previous error
+        if (!validateDebtItems()) return;
+        
+        setConfirmModalVisible(true);
+    }, [validateDebtItems]);
+
+    const confirmDebtCreation = async () => {
+        setError(null); // Clear error on success
         if (!selectedUserSolo1 || !selectedUserSolo2) return;
-
-        const deptId = ID.unique();
-
+        
         try {
+            const deptId = ID.unique();
+
             const debtPromises = debtItemsSolo
-                .filter(item => item.num) // Прибираємо перевірку на text
+                .filter(item => item.num)
                 .map(item => {
                     const documentId = ID.unique();
                     const debt = {
                         deptId: deptId,
-                        fromUserId: selectedUserSolo1.id,
-                        toUserId: selectedUserSolo2.id,
-                        text: item.text?.trim() || 'Без опису', // Додаємо значення за замовчуванням
-                        amount: Number(Number(item.num).toFixed(2)), // Округлення до 2 знаків
+                        fromUserId: selectedUserSolo1?.id || '',  // Add null check
+                        toUserId: selectedUserSolo2?.id || '',    // Add null check
+                        text: item.text?.trim() || 'Без опису',
+                        amount: Number(Number(item.num).toFixed(2)),
                         createdAt: new Date().toISOString(),
                     };
 
@@ -116,15 +163,21 @@ const SoloTab: React.FC<SoloTabProps> = ({ userList }) => {
             await Promise.all(debtPromises);
             console.log('Створено борги з group ID:', deptId);
             
-            // Reset form after successful creation
-            setDebtItemsSolo([{ id: '1', text: '', num: '0' }]);
-            setSelectedUserSolo1(null);
-            setSelectedUserSolo2(null);
+            setIsSuccess(true);
+            // Reset form after delay
+            setTimeout(() => {
+                setIsSuccess(false);
+                setConfirmModalVisible(false);
+                setDebtItemsSolo([{ id: '1', text: '', num: '0' }]);
+                setSelectedUserSolo1(null);
+                setSelectedUserSolo2(null);
+            }, 2000);
 
         } catch (error) {
             console.error('Error creating debts:', error);
+            setError('Помилка при створенні боргу');
         }
-    }, [debtItemsSolo, selectedUserSolo1, selectedUserSolo2, databases]);
+    };
 
     return (
         <View style={styles.soloTabContainer}>
@@ -240,6 +293,31 @@ const SoloTab: React.FC<SoloTabProps> = ({ userList }) => {
                     <Text style={styles.createButtonText}>Створити борг</Text>
                 </TouchableOpacity>
             </View>
+
+            <ConfirmDebtModal
+                visible={confirmModalVisible}
+                onClose={() => {
+                    setConfirmModalVisible(false);
+                    setIsSuccess(false);
+                }}
+                onConfirm={confirmDebtCreation}
+                debtInfo={selectedUserSolo1 && selectedUserSolo2 ? {
+                    fromUser: selectedUserSolo1.name,
+                    toUser: selectedUserSolo2.name,
+                    totalAmount: calculateTotalSolo(),
+                    itemsCount: debtItemsSolo.length
+                } : null}
+                isSuccess={isSuccess}
+            />
+
+            {error && (
+                <Animated.View style={[
+                    styles.errorContainer,
+                    { opacity: fadeAnim }
+                ]}>
+                    <Text style={styles.errorText}>{error}</Text>
+                </Animated.View>
+            )}
         </View>
     );
 };
@@ -364,6 +442,20 @@ const styles = StyleSheet.create({
         color: '#fff',
         fontSize: 16,
         fontFamily: 'MontserratBold',
+    },
+    errorContainer: {
+        backgroundColor: '#FFEBEE',
+        padding: 10,
+        borderRadius: 8,
+        marginBottom: 16,
+        borderWidth: 1,
+        borderColor: '#E53935',
+    },
+    errorText: {
+        color: '#E53935',
+        fontSize: 14,
+        fontFamily: 'Montserrat',
+        textAlign: 'center',
     },
 });
 

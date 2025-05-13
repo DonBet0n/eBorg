@@ -3,7 +3,6 @@ import { View, Text, TextInput, TouchableOpacity, KeyboardAvoidingView, Platform
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import authStyles from '../styles/AuthStyles';
-import { Debts, Users } from '../data/Data';
 import { useAppwrite, APPWRITE} from '../contexts/AppwriteContext';
 import { ID, Query } from 'react-native-appwrite';
 import AsyncStorage from '@react-native-async-storage/async-storage';

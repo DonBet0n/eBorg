@@ -1,8 +1,9 @@
 import { createContext, useContext, useState, useCallback, useEffect } from 'react';
 import { Client, Account, Databases, Storage, Query, Models } from 'react-native-appwrite';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { User, Debt } from '../types/debt';
+import { User, Debt, Statistics } from '../types/debt';
 import NetInfo from '@react-native-community/netinfo';
+import { calculateDebts } from '../utils/debtCalculations';
 
 export const APPWRITE = {
   endpoint: 'https://cloud.appwrite.io/v1',
@@ -38,6 +39,7 @@ export type AppwriteContextType = {
   getUserDebts: () => Promise<any>;
   logout: () => Promise<void>;
   debts: any[] | null;
+  statistics: Statistics;
   lastUpdate: Date | null;
   refreshDebts: () => Promise<void>;
   isOnline: boolean;
@@ -54,6 +56,12 @@ export const AppwriteContext = createContext<AppwriteContextType>({
   getUserDebts: async () => null,
   logout: async () => {},
   debts: null,
+  statistics: {
+    incomingDebts: 0,
+    outgoingDebts: 0,
+    activeDebtsCount: 0,
+    totalBalance: 0
+  },
   lastUpdate: null,
   refreshDebts: async () => {},
   isOnline: true,
@@ -66,6 +74,12 @@ export function AppwriteProvider({ children }: { children: React.ReactNode }) {
   const [debts, setDebts] = useState<any[] | null>(null);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
   const [isOnline, setIsOnline] = useState(true);
+  const [statistics, setStatistics] = useState<Statistics>({
+    incomingDebts: 0,
+    outgoingDebts: 0,
+    activeDebtsCount: 0,
+    totalBalance: 0
+  });
   const client = new Client();
   const account = new Account(client);
   const databases = new Databases(client);
@@ -130,48 +144,33 @@ export function AppwriteProvider({ children }: { children: React.ReactNode }) {
     }
   }, [account]);
 
+  const updateStatistics = useCallback((debtsData: any[]) => {
+    if (!user?.id || !debtsData) return;
+
+    const allDebts = debtsData.reduce((acc: any[], debt: any) => {
+      const debtItems = (debt.items || []).map((item: any) => ({
+        fromUserId: item.fromUserId,
+        toUserId: item.toUserId,
+        amount: item.amount
+      }));
+      return acc.concat(debtItems);
+    }, []);
+
+    const newStats = calculateDebts(allDebts, user.id);
+    setStatistics(newStats);
+  }, [user?.id]);
+
   const getUserDebts = async () => {
     try {
-      // Перевіряємо стан мережі перед будь-якими запитами
-      if (!isOnline) {
-        const cachedData = await AsyncStorage.getItem('cachedDebts');
-        if (cachedData) {
-          const parsedData = JSON.parse(cachedData);
-          setDebts(parsedData);
-          return parsedData;
-        }
+      if (!user?.id || !isOnline) {
         return [];
       }
 
-      // Перевіряємо кеш тільки якщо є інтернет
-      const cachedData = await AsyncStorage.getItem('cachedDebts');
-      const cachedTime = await AsyncStorage.getItem('debtsLastUpdate');
-      
-      if (cachedData && cachedTime && 
-          (new Date().getTime() - new Date(cachedTime).getTime() < 60000)) {
-        const parsedData = JSON.parse(cachedData);
-        setDebts(parsedData);
-        return parsedData;
-      }
-
-      // Якщо немає інтернету, повертаємо кешовані дані або пустий масив
-      if (!isOnline) {
-        if (cachedData) {
-          return JSON.parse(cachedData);
-        }
-        return [];
-      }
-
-      // В іншому випадку робимо запит до серверу
-      if (!user?.id) {
-        console.warn('No user found');
-        return [];
-      }
-      
       let allDocuments: AppwriteDebtDocument[] = [];
       let offset = 0;
       const limit = 100;
       
+      // Отримуємо всі документи через пагінацію
       while (true) {
         const response = await databases.listDocuments(
           APPWRITE.databases.main,
@@ -189,20 +188,33 @@ export function AppwriteProvider({ children }: { children: React.ReactNode }) {
 
         allDocuments = [...allDocuments, ...response.documents as AppwriteDebtDocument[]];
         
+        // Якщо отримали менше документів ніж ліміт, значить це останні документи
         if (response.documents.length < limit) {
           break;
         }
-        
+
         offset += limit;
+      }
+
+      if (allDocuments.length === 0) {
+        setDebts([]);
+        updateStatistics([]);
+        return [];
       }
 
       const uniqueUserIds = Array.from(new Set(
         allDocuments
-          .filter(debt => debt.fromUserId === user.id || debt.toUserId === user.id)
-          .map(debt => debt.fromUserId === user.id ? debt.toUserId : debt.fromUserId)
+          .filter((debt: AppwriteDebtDocument) => 
+            debt.fromUserId === user.id || debt.toUserId === user.id
+          )
+          .map((debt: AppwriteDebtDocument) => 
+            debt.fromUserId === user.id ? debt.toUserId : debt.fromUserId
+          )
       ));
 
       if (uniqueUserIds.length === 0) {
+        setDebts([]);
+        updateStatistics([]);
         return [];
       }
 
@@ -210,7 +222,7 @@ export function AppwriteProvider({ children }: { children: React.ReactNode }) {
         APPWRITE.databases.main,
         APPWRITE.databases.collections.users,
         [
-          Query.equal('$id', uniqueUserIds)
+          Query.equal('$id', uniqueUserIds as string[])
         ]
       );
 
@@ -224,7 +236,7 @@ export function AppwriteProvider({ children }: { children: React.ReactNode }) {
         ])
       );
 
-      const debtsByUser = allDocuments.reduce((acc: Record<string, any>, debt) => {
+      const debtsByUser = allDocuments.reduce((acc: Record<string, any>, debt: AppwriteDebtDocument) => {
         if (!debt?.fromUserId || !debt?.toUserId || !debt?.amount) return acc;
     
         if (debt.fromUserId === user.id || debt.toUserId === user.id) {
@@ -252,58 +264,32 @@ export function AppwriteProvider({ children }: { children: React.ReactNode }) {
               fromUserId: debt.fromUserId,
               toUserId: debt.toUserId,
               amount: amount,
-              date: debt.$createdAt // Переконайтесь, що це поле існує і має правильний формат
+              date: debt.$createdAt
             });
           }
         }
         return acc;
       }, {});
 
-      // Зберігаємо результат в кеш
       const result = Object.values(debtsByUser);
-      await AsyncStorage.setItem('cachedDebts', JSON.stringify(result));
-      await AsyncStorage.setItem('debtsLastUpdate', new Date().toISOString());
-      
       setDebts(result);
+      updateStatistics(result);
       setLastUpdate(new Date());
       return result;
 
     } catch (error) {
       console.error('Error fetching debts:', error);
-      // При помилці або офлайн режимі повертаємо кешовані дані
-      const cachedData = await AsyncStorage.getItem('cachedDebts');
-      if (cachedData) {
-        const parsedData = JSON.parse(cachedData);
-        setDebts(parsedData);
-        return parsedData;
-      }
+      setDebts([]);
+      updateStatistics([]);
       return [];
     }
   };
 
   const refreshDebts = async () => {
-    // Не оновлюємо дані якщо немає інтернету
-    if (!isOnline) {
-      return;
-    }
-    
-    setLastUpdate(null); // Скидаємо кеш
-    // Очищаємо кеш на пристрої
-    await AsyncStorage.removeItem('cachedDebts');
-    await AsyncStorage.removeItem('debtsLastUpdate');
-    await getUserDebts(); // Примусово отримуємо нові дані
+    if (!isOnline) return;
+    setLastUpdate(null);
+    await getUserDebts();
   };
-
-  // Додаємо автоматичне оновлення кожну хвилину
-  useEffect(() => {
-    const interval = setInterval(() => {
-      if (user) {
-        refreshDebts();
-      }
-    }, 60000); // 60000 ms = 1 хвилина
-
-    return () => clearInterval(interval);
-  }, [user]);
 
   return (
     <AppwriteContext.Provider value={{ 
@@ -316,6 +302,7 @@ export function AppwriteProvider({ children }: { children: React.ReactNode }) {
       getCurrentUser,
       getUserDebts,
       logout,
+      statistics,
       debts,
       lastUpdate,
       refreshDebts,

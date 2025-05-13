@@ -10,49 +10,20 @@ import { Statistics, Debt } from '../../types/debt';
 
 const HomeScreen = () => {
   const [isProfileModalVisible, setIsProfileModalVisible] = useState(false);
-  const { storage, user, getCurrentUser, getUserDebts, debts, refreshDebts, isOnline } = useAppwrite();
-  // Remove debts state since we're using it from context
-  const [statistics, setStatistics] = useState<Statistics>({
-    incomingDebts: 0,
-    outgoingDebts: 0,
-    activeDebtsCount: 0,
-    totalBalance: 0
-  });
-
-  useEffect(() => {
-    const init = async () => {
-      await getCurrentUser();
-      await fetchDebts();
-    };
-    init();
-  }, [user?.id]);
+  const { storage, user, getCurrentUser, debts, refreshDebts, isOnline, statistics } = useAppwrite();
+  const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
 
   useFocusEffect(
-    useCallback(() => {
-      if (user?.id) {
-        refreshDebts(); // Тільки перевіряємо необхідність оновлення
-      }
+    React.useCallback(() => {
+      const init = async () => {
+        if (!user) {
+          await getCurrentUser();
+        }
+        await refreshDebts();
+      };
+      init();
     }, [user?.id])
   );
-
-  const fetchDebts = async () => {
-    if (!user?.id) return;
-    const fetchedDebts = await getUserDebts();
-    
-    // Розраховуємо статистику на основі всіх боргів
-    const allDebts = (fetchedDebts || []).reduce((acc: any[], current: any) => {
-      // Перетворюємо кожен борг в правильний формат для calculateDebts
-      const debtItems = current.items.map((item: any) => ({
-        fromUserId: item.fromUserId,
-        toUserId: item.toUserId,
-        amount: item.amount
-      }));
-      return acc.concat(debtItems);
-    }, []);
-    
-    const stats = calculateDebts(allDebts, user.id);
-    setStatistics(stats);
-  };
 
   const isPositive = statistics.totalBalance > 0;
   const isZero = statistics.totalBalance === 0;
