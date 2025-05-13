@@ -10,14 +10,14 @@ import { Statistics, Debt } from '../../types/debt';
 
 const HomeScreen = () => {
   const [isProfileModalVisible, setIsProfileModalVisible] = useState(false);
-  const [debts, setDebts] = useState<any[]>([]);
+  const { storage, user, getCurrentUser, getUserDebts, debts, refreshDebts, isOnline } = useAppwrite();
+  // Remove debts state since we're using it from context
   const [statistics, setStatistics] = useState<Statistics>({
     incomingDebts: 0,
     outgoingDebts: 0,
     activeDebtsCount: 0,
     totalBalance: 0
   });
-  const { storage, user, getCurrentUser, getUserDebts } = useAppwrite();
 
   useEffect(() => {
     const init = async () => {
@@ -25,12 +25,12 @@ const HomeScreen = () => {
       await fetchDebts();
     };
     init();
-  }, [user?.id]); // Додаємо залежність від user.id
+  }, [user?.id]);
 
   useFocusEffect(
     useCallback(() => {
       if (user?.id) {
-        fetchDebts();
+        refreshDebts(); // Тільки перевіряємо необхідність оновлення
       }
     }, [user?.id])
   );
@@ -38,10 +38,9 @@ const HomeScreen = () => {
   const fetchDebts = async () => {
     if (!user?.id) return;
     const fetchedDebts = await getUserDebts();
-    setDebts(fetchedDebts);
     
     // Розраховуємо статистику на основі всіх боргів
-    const allDebts = fetchedDebts.reduce((acc: any[], current: any) => {
+    const allDebts = (fetchedDebts || []).reduce((acc: any[], current: any) => {
       // Перетворюємо кожен борг в правильний формат для calculateDebts
       const debtItems = current.items.map((item: any) => ({
         fromUserId: item.fromUserId,
@@ -60,6 +59,13 @@ const HomeScreen = () => {
 
   return (
     <View style={styles.conteinter}>
+      {!isOnline && (
+        <View style={styles.offlineBar}>
+          <Text style={styles.offlineText}>
+            Офлайн режим - дані можуть бути не актуальними
+          </Text>
+        </View>
+      )}
       {/* Header */}
       <View style={styles.header}>
         <Text style={styles.headerTitle}>eBorg</Text>
@@ -136,9 +142,9 @@ const HomeScreen = () => {
         {/* Recent transactions */}
         <View style={styles.transactionsContainer}>
           <Text style={styles.sectionTitle}>Останні транзакції</Text>
-          {debts && debts.length > 0 ? (
-            debts.slice(0, 5).flatMap((debtGroup: any) => 
-              debtGroup.items.slice(0, 2).map((item: any) => (
+          {(debts || []).length > 0 ? ( // Додаємо fallback до пустого масиву
+            (debts || []).slice(0, 5).flatMap((debtGroup: any) => 
+              (debtGroup.items || []).slice(0, 2).map((item: any) => (
                 <View key={`${debtGroup.userId}-${item.id}`} style={styles.transactionItem}>
                   <View style={styles.transactionLeft}>
                     <Text style={styles.transactionUser}>{debtGroup.userName}</Text>
@@ -382,6 +388,16 @@ const styles = StyleSheet.create({
   },
   paymentAmount: {
     color: '#666666',
+  },
+  offlineBar: {
+    backgroundColor: '#FFA000',
+    padding: 8,
+    alignItems: 'center',
+  },
+  offlineText: {
+    color: '#fff',
+    fontFamily: 'Montserrat',
+    fontSize: 12,
   },
 });
 

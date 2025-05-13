@@ -183,6 +183,14 @@ const detailsStyles = StyleSheet.create({
     color: '#666',
     fontFamily: 'Montserrat',
   },
+  noDataText: {
+    fontSize: 14,
+    color: '#666',
+    fontFamily: 'Montserrat',
+    textAlign: 'center',
+    marginTop: 16,
+    padding: 20,
+  },
 });
 
 export default detailsStyles;

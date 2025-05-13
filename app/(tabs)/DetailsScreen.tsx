@@ -10,12 +10,11 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { formatAmount } from '../../utils/debtCalculations';
 
 const DetailsScreen = () => {
-  const [debts, setDebts] = useState<any[]>([]);
+  const { getUserDebts, user, databases, debts, refreshDebts } = useAppwrite();
   const [selectedDebt, setSelectedDebt] = useState<any>(null);
   const [modalVisible, setModalVisible] = useState(false);
   const [isRejectionMode, setIsRejectionMode] = useState(false);
   const [selectedItems, setSelectedItems] = useState<string[]>([]);
-  const { getUserDebts, user, databases } = useAppwrite();
   const [expandedGroups, setExpandedGroups] = useState<{[key: string]: boolean}>({});
 
   const toggleGroup = (groupId: string) => {
@@ -27,12 +26,16 @@ const DetailsScreen = () => {
 
   useFocusEffect(
     React.useCallback(() => {
-      loadDebts();
+      refreshDebts(); // Тільки перевіряємо необхідність оновлення
     }, [])
   );
 
   const groupDebtsByDate = (items: any[]) => {
+    if (!items || items.length === 0) return [];
+
     const grouped = items.reduce((acc: any[], item: any) => {
+      if (!item) return acc;
+
       // Якщо це оплата боргу, додаємо як окремий елемент
       if (item.text === 'Оплата боргу') {
         acc.push({
@@ -73,20 +76,13 @@ const DetailsScreen = () => {
     );
   };
 
-  const loadDebts = async () => {
-    const userDebts = await getUserDebts();
-    if (userDebts) {
-      // Модифікуємо дані, додаючи групування
-      const modifiedDebts = userDebts.map((debt: any) => ({
-        ...debt,
-        items: groupDebtsByDate(debt.items)
-      }));
-      setDebts(modifiedDebts);
-    }
-  };
-
   const handleDebtPress = (debt: any, rejection = false) => {
-    setSelectedDebt(debt);
+    // Групуємо борги по даті перед встановленням у selectedDebt
+    const groupedItems = groupDebtsByDate(debt.items || []);
+    setSelectedDebt({
+      ...debt,
+      items: groupedItems
+    });
     setIsRejectionMode(rejection);
     setSelectedItems([]);
     setModalVisible(true);
@@ -114,7 +110,7 @@ const DetailsScreen = () => {
       await Promise.all(deletePromises);
       setModalVisible(false);
       setSelectedItems([]);
-      await loadDebts(); // Оновлюємо список після видалення
+      await refreshDebts(); // Використовуємо refreshDebts замість loadDebts
     } catch (error) {
       console.error('Error rejecting items:', error);
       // Тут можна додати відображення помилки користувачу
@@ -123,7 +119,7 @@ const DetailsScreen = () => {
 
   const handlePayDebt = async (userId: string, amount: number) => {
     try {
-      if (!user) return;
+      if (!user || !debts) return; // Add null check for debts
 
       const currentDebt = debts.find(debt => debt.userId === userId);
       if (!currentDebt) return;
@@ -145,7 +141,7 @@ const DetailsScreen = () => {
         }
       );
 
-      loadDebts();
+      await refreshDebts(); // Використовуємо refreshDebts замість loadDebts
     } catch (error) {
       console.error('Error paying debt:', error);
     }
@@ -266,19 +262,23 @@ const DetailsScreen = () => {
   return (
     <View style={detailsStyles.container}>
       <FlatList
-        data={debts}
+        data={debts || []}
         keyExtractor={(item) => item.userId}
-        renderItem={({ item }) => (
-          <DebtCard
-            id={item.userId}
-            fromUser={item.userName || 'Завантаження...'}
-            items={item.items}
-            totalAmount={item.totalAmount}
-            onPress={() => handleDebtPress(item)}
-            onPayPress={(amount) => handlePayDebt(item.userId, amount)}
-            onRejectPress={() => handleDebtPress(item, true)}
-          />
-        )}
+        renderItem={({ item }) => {
+          // Групуємо транзакції перед передачею в DebtCard
+          const groupedItems = groupDebtsByDate(item.items || []);
+          return (
+            <DebtCard
+              id={item.userId}
+              fromUser={item.userName || 'Завантаження...'}
+              items={groupedItems} // Передаємо вже згруповані дані
+              totalAmount={item.totalAmount || 0}
+              onPress={() => handleDebtPress(item)}
+              onPayPress={(amount) => handlePayDebt(item.userId, amount)}
+              onRejectPress={() => handleDebtPress(item, true)}
+            />
+          );
+        }}
       />
 
       <Modal
@@ -297,7 +297,7 @@ const DetailsScreen = () => {
                   onPress={handleSelectAll}
                 >
                   <MaterialIcons
-                    name={selectedDebt?.items.flatMap((group: any) => 
+                    name={selectedDebt?.items?.flatMap((group: any) => 
                       group.isPayment ? [group.items[0].id] : group.items.map((item: any) => item.id)
                     ).length === selectedItems.length ? "check-box" : "check-box-outline-blank"}
                     size={24}
@@ -316,11 +316,15 @@ const DetailsScreen = () => {
             </View>
             
             <ScrollView style={detailsStyles.modalScroll}>
-              {selectedDebt?.items.map((group: any, groupIndex: number) => (
-                <View key={groupIndex}>
-                  {renderModalItem(group, groupIndex)}
-                </View>
-              ))}
+              {selectedDebt?.items ? (
+                selectedDebt.items.map((group: any, groupIndex: number) => (
+                  <View key={groupIndex}>
+                    {renderModalItem(group, groupIndex)}
+                  </View>
+                ))
+              ) : (
+                <Text style={detailsStyles.noDataText}>Немає транзакцій</Text>
+              )}
             </ScrollView>
 
             <View style={detailsStyles.modalFooter}>

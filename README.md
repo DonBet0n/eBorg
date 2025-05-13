@@ -1,50 +1,41 @@
-# Welcome to your Expo app 👋
+# eBorg - Сервіс управління боргами 💰
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+[![React Native](https://img.shields.io/badge/React_Native-0.71-blue.svg)](https://reactnative.dev/)
+[![Expo](https://img.shields.io/badge/Expo-SDK_49-black.svg)](https://expo.dev/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue.svg)](https://www.typescriptlang.org/)
 
-## Get started
+eBorg - це сучасний мобільний додаток для управління боргами та спільними витратами між друзями та знайомими. Розроблений з використанням React Native та Expo.
 
-1. Install dependencies
+## 🚀 Основні можливості
 
-   ```bash
-   npm install
-   ```
+### Управління боргами
+- 💳 Відстеження персональних боргів
+- 📊 Детальна статистика заборгованостей
+- 💸 Зручна система оплати боргів
+- ❌ Можливість відхилення транзакцій
 
-2. Start the app
+### Групові витрати
+- 👥 Розподіл витрат між декількома користувачами
+- 📝 Детальний опис кожної транзакції
+- 🔄 Автоматичний розрахунок часток
 
-   ```bash
-    npx expo start
-   ```
+### Інтерфейс
+- 📱 Адаптивний дизайн
+- 🎨 Інтуїтивно зрозумілий інтерфейс
+- 🌙 Підтримка темної теми
 
-In the output, you'll find options to open the app in a
+## 🛠 Технічний стек
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
+- **Frontend**: React Native, Expo, TypeScript
+- **Backend**: Appwrite
+- **Стан**: React Context API
+- **Навігація**: Expo Router
+- **UI компоненти**: React Native Core Components
 
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
+## 📝 Плани розвитку
 
-## Get a fresh project
-
-When you're ready, run:
-
-```bash
-npm run reset-project
-```
-
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
-
-## Learn more
-
-To learn more about developing your project with Expo, look at the following resources:
-
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
-
-## Join the community
-
-Join our community of developers creating universal apps.
-
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+- [ ] Додавання push-повідомлень
+- [ ] Інтеграція з платіжними системами
+- [ ] Експорт звітів
+- [ ] Розширена аналітика
+- [ ] Офлайн режим

@@ -1,7 +1,8 @@
-import { createContext, useContext, useState, useCallback } from 'react';
-import { Client, Account, Databases, Storage, Query } from 'react-native-appwrite';
+import { createContext, useContext, useState, useCallback, useEffect } from 'react';
+import { Client, Account, Databases, Storage, Query, Models } from 'react-native-appwrite';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { User } from '../types/debt';
+import { User, Debt } from '../types/debt';
+import NetInfo from '@react-native-community/netinfo';
 
 export const APPWRITE = {
   endpoint: 'https://cloud.appwrite.io/v1',
@@ -36,6 +37,10 @@ export type AppwriteContextType = {
   getCurrentUser: () => Promise<User | null>;
   getUserDebts: () => Promise<any>;
   logout: () => Promise<void>;
+  debts: any[] | null;
+  lastUpdate: Date | null;
+  refreshDebts: () => Promise<void>;
+  isOnline: boolean;
 };
 
 export const AppwriteContext = createContext<AppwriteContextType>({
@@ -48,10 +53,19 @@ export const AppwriteContext = createContext<AppwriteContextType>({
   getCurrentUser: async () => null,
   getUserDebts: async () => null,
   logout: async () => {},
+  debts: null,
+  lastUpdate: null,
+  refreshDebts: async () => {},
+  isOnline: true,
 });
+
+type AppwriteDebtDocument = Omit<Debt, 'id'> & Models.Document;
 
 export function AppwriteProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
+  const [debts, setDebts] = useState<any[] | null>(null);
+  const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
+  const [isOnline, setIsOnline] = useState(true);
   const client = new Client();
   const account = new Account(client);
   const databases = new Databases(client);
@@ -59,6 +73,15 @@ export function AppwriteProvider({ children }: { children: React.ReactNode }) {
   client
     .setEndpoint(APPWRITE.endpoint)
     .setProject(APPWRITE.project);
+
+  // Додаємо відслідковування стану мережі
+  useEffect(() => {
+    const unsubscribe = NetInfo.addEventListener(state => {
+      setIsOnline(state.isConnected ?? false);
+    });
+
+    return () => unsubscribe();
+  }, []);
 
   const getCurrentUser = useCallback(async () => {
     try {
@@ -98,8 +121,10 @@ export function AppwriteProvider({ children }: { children: React.ReactNode }) {
   const logout = useCallback(async () => {
     try {
       await account.deleteSession('current');
-      await AsyncStorage.removeItem('cachedUser');
+      await AsyncStorage.clear(); // Очищаємо весь кеш включно з боргами
       setUser(null);
+      setDebts(null);
+      setLastUpdate(null);
     } catch (error) {
       console.error('Error logging out:', error);
     }
@@ -107,36 +132,80 @@ export function AppwriteProvider({ children }: { children: React.ReactNode }) {
 
   const getUserDebts = async () => {
     try {
+      // Перевіряємо стан мережі перед будь-якими запитами
+      if (!isOnline) {
+        const cachedData = await AsyncStorage.getItem('cachedDebts');
+        if (cachedData) {
+          const parsedData = JSON.parse(cachedData);
+          setDebts(parsedData);
+          return parsedData;
+        }
+        return [];
+      }
+
+      // Перевіряємо кеш тільки якщо є інтернет
+      const cachedData = await AsyncStorage.getItem('cachedDebts');
+      const cachedTime = await AsyncStorage.getItem('debtsLastUpdate');
+      
+      if (cachedData && cachedTime && 
+          (new Date().getTime() - new Date(cachedTime).getTime() < 60000)) {
+        const parsedData = JSON.parse(cachedData);
+        setDebts(parsedData);
+        return parsedData;
+      }
+
+      // Якщо немає інтернету, повертаємо кешовані дані або пустий масив
+      if (!isOnline) {
+        if (cachedData) {
+          return JSON.parse(cachedData);
+        }
+        return [];
+      }
+
+      // В іншому випадку робимо запит до серверу
       if (!user?.id) {
         console.warn('No user found');
         return [];
       }
       
-      const response = await databases.listDocuments(
-        APPWRITE.databases.main,
-        APPWRITE.databases.collections.debts,
-        [
-          Query.orderDesc('$createdAt')
-        ]
-      );
+      let allDocuments: AppwriteDebtDocument[] = [];
+      let offset = 0;
+      const limit = 100;
+      
+      while (true) {
+        const response = await databases.listDocuments(
+          APPWRITE.databases.main,
+          APPWRITE.databases.collections.debts,
+          [
+            Query.orderDesc('$createdAt'),
+            Query.limit(limit),
+            Query.offset(offset)
+          ]
+        );
 
-      if (!response?.documents) {
-        return [];
+        if (!response?.documents || response.documents.length === 0) {
+          break;
+        }
+
+        allDocuments = [...allDocuments, ...response.documents as AppwriteDebtDocument[]];
+        
+        if (response.documents.length < limit) {
+          break;
+        }
+        
+        offset += limit;
       }
 
-      // Знаходимо унікальні ID користувачів
       const uniqueUserIds = Array.from(new Set(
-        response.documents
+        allDocuments
           .filter(debt => debt.fromUserId === user.id || debt.toUserId === user.id)
           .map(debt => debt.fromUserId === user.id ? debt.toUserId : debt.fromUserId)
       ));
 
-      // Якщо немає боргів, повертаємо пустий масив
       if (uniqueUserIds.length === 0) {
         return [];
       }
 
-      // Отримуємо дані користувачів одним запитом
       const usersResponse = await databases.listDocuments(
         APPWRITE.databases.main,
         APPWRITE.databases.collections.users,
@@ -145,7 +214,6 @@ export function AppwriteProvider({ children }: { children: React.ReactNode }) {
         ]
       );
 
-      // Створюємо мапу користувачів
       const userDataMap = new Map(
         usersResponse.documents.map(userData => [
           userData.$id,
@@ -156,10 +224,9 @@ export function AppwriteProvider({ children }: { children: React.ReactNode }) {
         ])
       );
 
-      // Групуємо борги по користувачам
-      const debtsByUser = response.documents.reduce((acc: Record<string, any>, debt) => {
+      const debtsByUser = allDocuments.reduce((acc: Record<string, any>, debt) => {
         if (!debt?.fromUserId || !debt?.toUserId || !debt?.amount) return acc;
-
+    
         if (debt.fromUserId === user.id || debt.toUserId === user.id) {
           const otherUserId = debt.fromUserId === user.id ? debt.toUserId : debt.fromUserId;
           const userData = userDataMap.get(otherUserId);
@@ -175,29 +242,68 @@ export function AppwriteProvider({ children }: { children: React.ReactNode }) {
             };
           }
           
-          // Інші операції з боргами
           if (!isNaN(Number(debt.amount))) {
-            acc[otherUserId].totalAmount += debt.fromUserId === user.id ? -Number(debt.amount) : Number(debt.amount);
+            const amount = Number(debt.amount);
+            acc[otherUserId].totalAmount += debt.fromUserId === user.id ? -amount : amount;
             
             acc[otherUserId].items.push({
               id: debt.$id,
               text: debt.text?.trim() || 'Без опису',
               fromUserId: debt.fromUserId,
               toUserId: debt.toUserId,
-              amount: Number(debt.amount),
-              date: debt.createdAt
+              amount: amount,
+              date: debt.$createdAt // Переконайтесь, що це поле існує і має правильний формат
             });
           }
         }
         return acc;
       }, {});
 
-      return Object.values(debtsByUser);
+      // Зберігаємо результат в кеш
+      const result = Object.values(debtsByUser);
+      await AsyncStorage.setItem('cachedDebts', JSON.stringify(result));
+      await AsyncStorage.setItem('debtsLastUpdate', new Date().toISOString());
+      
+      setDebts(result);
+      setLastUpdate(new Date());
+      return result;
+
     } catch (error) {
       console.error('Error fetching debts:', error);
+      // При помилці або офлайн режимі повертаємо кешовані дані
+      const cachedData = await AsyncStorage.getItem('cachedDebts');
+      if (cachedData) {
+        const parsedData = JSON.parse(cachedData);
+        setDebts(parsedData);
+        return parsedData;
+      }
       return [];
     }
   };
+
+  const refreshDebts = async () => {
+    // Не оновлюємо дані якщо немає інтернету
+    if (!isOnline) {
+      return;
+    }
+    
+    setLastUpdate(null); // Скидаємо кеш
+    // Очищаємо кеш на пристрої
+    await AsyncStorage.removeItem('cachedDebts');
+    await AsyncStorage.removeItem('debtsLastUpdate');
+    await getUserDebts(); // Примусово отримуємо нові дані
+  };
+
+  // Додаємо автоматичне оновлення кожну хвилину
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (user) {
+        refreshDebts();
+      }
+    }, 60000); // 60000 ms = 1 хвилина
+
+    return () => clearInterval(interval);
+  }, [user]);
 
   return (
     <AppwriteContext.Provider value={{ 
@@ -209,7 +315,11 @@ export function AppwriteProvider({ children }: { children: React.ReactNode }) {
       setUser,
       getCurrentUser,
       getUserDebts,
-      logout
+      logout,
+      debts,
+      lastUpdate,
+      refreshDebts,
+      isOnline,
     }}>
       {children}
     </AppwriteContext.Provider>

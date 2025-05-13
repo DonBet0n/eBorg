@@ -19,7 +19,7 @@ interface DebtCardProps {
 }
 
 const DebtCard: React.FC<DebtCardProps> = ({
-    id, fromUser, items, totalAmount, onPress, onPayPress, onRejectPress
+    id, fromUser, items = [], totalAmount, onPress, onPayPress, onRejectPress
 }) => {
   const [selectedButton, setSelectedButton] = useState<'pay' | 'reject' | null>(null);
   const [isAnimating, setIsAnimating] = useState(false);
@@ -174,12 +174,12 @@ const DebtCard: React.FC<DebtCardProps> = ({
             { color: totalAmount === 0 ? '#666' : 
                      totalAmount > 0 ? '#4CAF50' : '#E53935' }
           ]}>
-            {totalAmount > 0 ? '+' : ''}{formatAmount(totalAmount)} грн
+            {totalAmount > 0 ? '+' : ''}{formatAmount(totalAmount || 0)} грн
           </Text>
         </View>
         
         <View style={styles.itemsContainer}>
-          {items.slice(0, 2).map((group, index) => (
+          {(items || []).slice(0, 2).map((group, index) => (
             <View key={index} style={styles.item}>
               <View style={styles.itemHeader}>
                 <Text style={styles.itemDate}>
@@ -191,7 +191,7 @@ const DebtCard: React.FC<DebtCardProps> = ({
                   </Text>
                 ) : (
                   <Text style={styles.itemText}>
-                    {group.items.length} {group.items.length === 1 ? 'транзакція' : 'транзакції'}
+                    {(group.items || []).length} {(group.items || []).length === 1 ? 'транзакція' : 'транзакції'}
                   </Text>
                 )}
                 <Text style={[
@@ -201,16 +201,16 @@ const DebtCard: React.FC<DebtCardProps> = ({
                   )
                 ]}>
                   {group.isPayment 
-                    ? `${formatAmount(Math.abs(group.totalAmount))} грн`
-                    : `${group.totalAmount > 0 ? '+' : ''}${formatAmount(group.totalAmount)} грн`
+                    ? `${formatAmount(group.totalAmount || 0)} грн`
+                    : `${group.totalAmount > 0 ? '+' : ''}${formatAmount(group.totalAmount || 0)} грн`
                   }
                 </Text>
               </View>
             </View>
           ))}
-          {items.length > 2 && (
+          {(items || []).length > 2 && (
             <Text style={styles.moreItems}>
-              ... та ще {items.length - 2} {items.length > 4 ? 'груп' : 'групи'}
+              ... та ще {items.length - 2} {items.length - 2 > 2 ? 'груп' : 'групи'}
             </Text>
           )}
         </View>

@@ -24,8 +24,9 @@ export const calculateDebts = (debts: any[], currentUserId: string): Statistics 
     return statistics;
 };
 
-export const formatAmount = (amount: number): number => {
-  return Number(amount.toFixed(2));
+export const formatAmount = (amount: number | undefined): string => {
+  if (amount === undefined || isNaN(amount)) return '0.00';
+  return Number(amount).toFixed(2);
 };
 
 export const formatCurrency = (amount: number): string => {
