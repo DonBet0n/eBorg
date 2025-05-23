@@ -1,29 +1,34 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Image } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Image, RefreshControl } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import ProfileModal from '../../components/HomeScreen/ProfileModal';
 import { calculateDebts, formatCurrency, formatAmount } from '../../utils/debtCalculations';
-import { APPWRITE } from '../../contexts/AppwriteContext';
-import { useAppwrite } from '../../contexts/AppwriteContext';
+import { useFirebase } from '../../contexts/FirebaseContext';
 import { Statistics, Debt } from '../../types/debt';
 
 const HomeScreen = () => {
   const [isProfileModalVisible, setIsProfileModalVisible] = useState(false);
-  const { storage, user, getCurrentUser, debts, refreshDebts, isOnline, statistics } = useAppwrite();
+  const { user, getCurrentUser, debts, isOnline, statistics, triggerDebtsRefresh } = useFirebase();
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
-  useFocusEffect(
-    React.useCallback(() => {
-      const init = async () => {
-        if (!user) {
-          await getCurrentUser();
-        }
-        await refreshDebts();
-      };
-      init();
-    }, [user?.id])
-  );
+  useEffect(() => {
+    const init = async () => {
+      if (!user) {
+        await getCurrentUser();
+      }
+      triggerDebtsRefresh();
+    };
+    init();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    triggerDebtsRefresh();
+    setTimeout(() => setRefreshing(false), 500); // або після await getUserDebts()
+  };
 
   const isPositive = statistics.totalBalance > 0;
   const isZero = statistics.totalBalance === 0;
@@ -48,12 +53,7 @@ const HomeScreen = () => {
             <Text style={styles.userName}>{user?.name || 'Гість'}</Text>
             {user?.avatar ? (
               <Image 
-                source={{ 
-                  uri: storage.getFileView(
-                    APPWRITE.storage.avatars,
-                    user.avatar
-                  ).href 
-                }}
+                source={{ uri: user.avatar }}
                 style={styles.avatarImage}
               />
             ) : (
@@ -63,7 +63,12 @@ const HomeScreen = () => {
         </TouchableOpacity>
       </View>
 
-      <ScrollView style={styles.content}>
+      <ScrollView 
+        style={styles.content}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+        }
+      >
         {/* Main balance block */}
         <View style={[
           styles.debtCard, 

@@ -3,8 +3,8 @@ import { StyleSheet, Text, View, TouchableOpacity, FlatList, TextInput, Modal, V
 import { MaterialIcons } from '@expo/vector-icons';
 import DebtItemComponent from '../DebtItem';
 import { User, DebtItem, Debt } from '../../types/debt';
-import { useAppwrite, APPWRITE } from '../../contexts/AppwriteContext';
-import { ID } from 'react-native-appwrite';
+import { useFirebase } from '../../contexts/FirebaseContext';
+import { addDoc, collection } from 'firebase/firestore';
 import ConfirmDebtModal from './ConfirmDebtModal';
 
 interface SoloTabProps {
@@ -12,7 +12,7 @@ interface SoloTabProps {
 }
 
 const SoloTab: React.FC<SoloTabProps> = ({ userList }) => {
-    const { databases } = useAppwrite();
+    const { db } = useFirebase();
     const [isUserListModalVisible, setUserListModalVisible] = useState(false);
     const [debtItemsSolo, setDebtItemsSolo] = useState<DebtItem[]>([{ id: '1', text: '', num: '0' }]);
     const [selectedUserSolo1, setSelectedUserSolo1] = useState<User | null>(null);
@@ -137,27 +137,21 @@ const SoloTab: React.FC<SoloTabProps> = ({ userList }) => {
         if (!selectedUserSolo1 || !selectedUserSolo2) return;
         
         try {
-            const deptId = ID.unique();
+            const deptId = Date.now().toString();
 
             const debtPromises = debtItemsSolo
                 .filter(item => item.num)
                 .map(item => {
-                    const documentId = ID.unique();
                     const debt = {
                         deptId: deptId,
                         fromUserId: selectedUserSolo1?.id || '',  // Add null check
                         toUserId: selectedUserSolo2?.id || '',    // Add null check
                         text: item.text?.trim() || 'Без опису',
                         amount: Number(Number(item.num).toFixed(2)),
-                        createdAt: new Date().toISOString(),
+                        createdAt: new Date(),
                     };
 
-                    return databases.createDocument(
-                        APPWRITE.databases.main,
-                        APPWRITE.databases.collections.debts,
-                        documentId,
-                        debt
-                    );
+                    return addDoc(collection(db, 'debts'), debt);
                 });
 
             await Promise.all(debtPromises);

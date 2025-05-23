@@ -6,7 +6,7 @@ import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
 import 'react-native-reanimated';
 import { View } from 'react-native';
-import { AppwriteContext, client, account, databases, AppwriteProvider } from '../contexts/AppwriteContext';
+import { FirebaseProvider } from '../contexts/FirebaseContext';
 import { useColorScheme } from '@/hooks/useColorScheme';
 
 // Prevent the splash screen from auto-hiding before asset loading is complete.
@@ -30,7 +30,7 @@ export default function RootLayout() {
   }
 
   return (
-    <AppwriteProvider>
+    <FirebaseProvider>
       <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
         <View style={{ flex: 1 }}>
           <Stack screenOptions={{ headerShown: false }}>
@@ -41,6 +41,6 @@ export default function RootLayout() {
           <StatusBar style="auto" />
         </View>
       </ThemeProvider>
-    </AppwriteProvider>
+    </FirebaseProvider>
   );
 }

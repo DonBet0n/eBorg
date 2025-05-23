@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "883846176460",
+    "project_id": "eborg-e5fae",
+    "storage_bucket": "eborg-e5fae.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:883846176460:android:27648e4078c6e26ae66c69",
+        "android_client_info": {
+          "package_name": "yaroslav.eborg"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAy-lhZCvzcV24Q-AeTyG5PvSkN7Zs-nmU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

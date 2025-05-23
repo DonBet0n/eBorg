@@ -1,21 +1,23 @@
-import React, { useState } from 'react';
-import { View, FlatList, Modal, Text, ScrollView, TouchableOpacity, StyleSheet } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, FlatList, Modal, Text, ScrollView, TouchableOpacity, StyleSheet, RefreshControl } from 'react-native';
 import DebtCard from '../../components/DetailsScreen/DebtCard';
-import { useAppwrite, APPWRITE } from '../../contexts/AppwriteContext';
+import { useFirebase } from '../../contexts/FirebaseContext';
 import detailsStyles from '../../styles/DetailsStyles';
 import { useFocusEffect } from '@react-navigation/native';
 import { Debt } from '../../types/debt';
 import { ID } from 'react-native-appwrite';
 import { MaterialIcons } from '@expo/vector-icons';
 import { formatAmount } from '../../utils/debtCalculations';
+import { addDoc, deleteDoc, doc, collection } from 'firebase/firestore';
 
 const DetailsScreen = () => {
-  const { getUserDebts, user, databases, debts, refreshDebts, lastUpdate } = useAppwrite();
+  const { getUserDebts, user, db, debts, lastUpdate, triggerDebtsRefresh } = useFirebase();
   const [selectedDebt, setSelectedDebt] = useState<any>(null);
   const [modalVisible, setModalVisible] = useState(false);
   const [isRejectionMode, setIsRejectionMode] = useState(false);
   const [selectedItems, setSelectedItems] = useState<string[]>([]);
   const [expandedGroups, setExpandedGroups] = useState<{[key: string]: boolean}>({});
+  const [refreshing, setRefreshing] = useState(false);
 
   const toggleGroup = (groupId: string) => {
     setExpandedGroups(prev => ({
@@ -24,11 +26,16 @@ const DetailsScreen = () => {
     }));
   };
 
-  useFocusEffect(
-    React.useCallback(() => {
-      refreshDebts();
-    }, [refreshDebts])
-  );
+  useEffect(() => {
+    triggerDebtsRefresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    triggerDebtsRefresh();
+    setTimeout(() => setRefreshing(false), 500);
+  };
 
   const groupDebtsByDate = (items: any[]) => {
     if (!items || items.length === 0) return [];
@@ -99,17 +106,12 @@ const DetailsScreen = () => {
   const handleRejectItems = async () => {
     try {
       const deletePromises = selectedItems.map(itemId =>
-        databases.deleteDocument(
-          APPWRITE.databases.main,
-          APPWRITE.databases.collections.debts,
-          itemId
-        )
+        deleteDoc(doc(db, 'debts', itemId))
       );
-
       await Promise.all(deletePromises);
       setModalVisible(false);
       setSelectedItems([]);
-      await refreshDebts(); // This will update all screens
+      triggerDebtsRefresh(); // Оновити debts
     } catch (error) {
       console.error('Error rejecting items:', error);
     }
@@ -125,21 +127,16 @@ const DetailsScreen = () => {
       // Створюємо інверсну транзакцію
       // Якщо баланс від'ємний (ми винні), то транзакція буде від нас до користувача
       // Якщо баланс додатній (нам винні), то транзакція буде від користувача до нас
-      await databases.createDocument(
-        APPWRITE.databases.main,
-        APPWRITE.databases.collections.debts,
-        'unique()',
-        {
-          deptId: ID.unique(),
-          fromUserId: currentDebt.totalAmount < 0 ? userId : user.id,  // Змінюємо напрямок
-          toUserId: currentDebt.totalAmount < 0 ? user.id : userId,    // Змінюємо напрямок
-          amount: amount,
-          text: 'Оплата боргу',
-          createdAt: new Date().toISOString()
-        }
-      );
+      await addDoc(collection(db, 'debts'), {
+        deptId: Date.now().toString(),
+        fromUserId: currentDebt.totalAmount < 0 ? userId : user.id,  // Змінюємо напрямок
+        toUserId: currentDebt.totalAmount < 0 ? user.id : userId,    // Змінюємо напрямок
+        amount: amount,
+        text: 'Оплата боргу',
+        createdAt: new Date()
+      });
 
-      await refreshDebts(); // This will update all screens
+      triggerDebtsRefresh(); // Оновити debts
     } catch (error) {
       console.error('Error paying debt:', error);
     }
@@ -277,6 +274,9 @@ const DetailsScreen = () => {
             />
           );
         }}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+        }
       />
 
       <Modal

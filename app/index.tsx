@@ -3,43 +3,46 @@ import { View, Text, TextInput, TouchableOpacity, KeyboardAvoidingView, Platform
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import authStyles from '../styles/AuthStyles';
-import { useAppwrite, APPWRITE} from '../contexts/AppwriteContext';
-import { ID, Query } from 'react-native-appwrite';
+import { useFirebase } from '../contexts/FirebaseContext';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
+import { doc, setDoc } from 'firebase/firestore';
 
 const AuthScreen = () => {
-  const { account, databases, setUser, getCurrentUser } = useAppwrite();
+  const { auth, db, setUser, getCurrentUser } = useFirebase();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [username, setUsername] = useState('');
   const [isLogin, setIsLogin] = useState(true);
-  const [isLoading, setIsLoading] = useState(true); // Змінюємо початковий стан на true
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    //setIsLoading(false);
+    const checkSession = async () => {
+      try {
+        // 1. Якщо є активний користувач у Firebase - підтягуємо з Firestore
+        if (auth.currentUser) {
+          const user = await getCurrentUser();
+          if (user) {
+            setUser(user);
+            router.replace('/(tabs)/HomeScreen');
+            return;
+          }
+        }
+        // 2. Якщо є кешований користувач - піднімаємо з кешу
+        const cachedUser = await AsyncStorage.getItem('cachedUser');
+        if (cachedUser) {
+          setUser(JSON.parse(cachedUser));
+          router.replace('/(tabs)/HomeScreen');
+          return;
+        }
+      } catch (error) {
+        console.log('No active session');
+      } finally {
+        setIsLoading(false);
+      }
+    };
     checkSession();
-  }, []);
-
-  const checkSession = async () => {
-    try {
-      // Спочатку перевіряємо кешованого користувача
-      const cachedUser = await AsyncStorage.getItem('cachedUser');
-      if (cachedUser) {
-        router.replace('/(tabs)/HomeScreen');
-        return;
-      }
-
-      const session = await account.get();
-      if (session.$id) {
-        await getCurrentUser(); // Це тепер збереже користувача в кеш
-        router.replace('/(tabs)/HomeScreen');
-      }
-    } catch (error) {
-      console.log('No active session');
-    } finally {
-      setIsLoading(false);
-    }
-  };
+  }, [auth, getCurrentUser, setUser]);
 
   const validateForm = () => {
     if (!email || !password || (!isLogin && !username)) {
@@ -63,7 +66,7 @@ const AuthScreen = () => {
 
   const handleLogin = async () => {
     try {
-      await account.createEmailPasswordSession(email, password);
+      await signInWithEmailAndPassword(auth, email, password);
       const user = await getCurrentUser();
       if (user) {
         router.replace('/(tabs)/HomeScreen');
@@ -77,28 +80,13 @@ const AuthScreen = () => {
 
   const handleRegister = async () => {
     try {
-      const authUser = await account.create(
-        ID.unique(),
-        email,
-        password,
-        username.toLowerCase()
-      );
-      
-      if (authUser.$id) {
-        const userData = await databases.createDocument(
-          APPWRITE.databases.main,
-          APPWRITE.databases.collections.users,
-          authUser.$id,
-          {
-            name: username,
-            email: email,
-          }
-        );
-
-        await account.createEmailPasswordSession(email, password);
-        await getCurrentUser();
-        router.replace('/(tabs)/HomeScreen');
-      }
+      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      const userId = userCredential.user.uid;
+      await setDoc(doc(db, 'users', userId), {
+        name: username,
+        email: email,
+      });
+      await handleLogin();
     } catch (error) {
       console.error('Registration error:', error);
       Alert.alert('Registration Error', 'Failed to register. Please try again.');
@@ -116,7 +104,6 @@ const AuthScreen = () => {
     }
   };
 
-  // Показуємо порожній екран під час завантаження
   if (isLoading) {
     return <View style={{flex: 1, backgroundColor: '#fff'}} />
   }

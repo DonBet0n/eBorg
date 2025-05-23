@@ -3,37 +3,35 @@ import { View, TouchableOpacity, Text, StyleSheet } from 'react-native';
 import SoloTab from '../../components/AddScreen/Solo';
 import MultyTab from '../../components/AddScreen/Multy';
 import { User } from '../../types/debt';
-import { useAppwrite, APPWRITE } from '../../contexts/AppwriteContext';
+import { useFirebase } from '../../contexts/FirebaseContext';
+import { getDocs, collection } from 'firebase/firestore';
 
 const AddScreen: React.FC = () => {
     const [selectedTab, setSelectedTab] = useState<'solo' | 'multy'>('solo');
     const [users, setUsers] = useState<User[]>([]);
-    const { databases } = useAppwrite();
+    const { db } = useFirebase();
 
     useEffect(() => {
         const fetchUsers = async () => {
             try {
-                const response = await databases.listDocuments(
-                    APPWRITE.databases.main,
-                    APPWRITE.databases.collections.users
-                );
-                
-                const fetchedUsers: User[] = response.documents.map(doc => ({
-                    id: doc.$id,
-                    name: doc.name,
-                    email: doc.email,
-                    secondName: doc.secondName,
-                    avatar: doc.avatar
-                }));
-                
+                const response = await getDocs(collection(db, 'users'));
+                const fetchedUsers: User[] = response.docs.map(docSnap => {
+                    const data = docSnap.data();
+                    return {
+                        id: docSnap.id,
+                        name: data.name || '',
+                        email: data.email || '',
+                        secondName: data.secondName || '',
+                        avatar: data.avatar || ''
+                    };
+                });
                 setUsers(fetchedUsers);
             } catch (error) {
                 console.error('Error fetching users:', error);
             }
         };
-
         fetchUsers();
-    }, [databases]);
+    }, [db]);
 
     return (
         <View style={styles.container}>

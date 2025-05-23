@@ -3,8 +3,8 @@ import { StyleSheet, Text, View, TouchableOpacity, FlatList, TextInput, Modal, S
 import { MaterialIcons } from '@expo/vector-icons';
 import DebtItemComponent from '../../components/DebtItem';
 import { User, DebtItem } from '../../types/debt';
-import { useAppwrite, APPWRITE } from '../../contexts/AppwriteContext';
-import { ID } from 'react-native-appwrite';
+import { useFirebase } from '../../contexts/FirebaseContext';
+import { addDoc, collection } from 'firebase/firestore';
 import ConfirmDebtModal from './ConfirmDebtModal';
 
 interface MultyTabProps {
@@ -12,10 +12,10 @@ interface MultyTabProps {
 }
 
 const MultyTab: React.FC<MultyTabProps> = ({ userList }) => {
-    const { databases } = useAppwrite();
+    const { db } = useFirebase();
     const [isUserListModalVisible, setUserListModalVisible] = useState(false);
     const [selectedUsersMulty, setSelectedUsersMulty] = useState<User[]>([]);
-    const [totalItemsMulty, setTotalItemsMulty] = useState<DebtItem[]>([{ id: 'totalItem1', text: '', num: '0' }]);
+    const [totalItemsMulty, setTotalItemsMulty] = useState<DebtItem[]>([]);
     const [userItemsMulty, setUserItemsMulty] = useState<{ [userId: string]: DebtItem[] }>({});
     const [isTotalDropdownOpen, setTotalDropdownOpen] = useState(false);
     const [userDropdownOpen, setUserDropdownOpen] = useState<{ [key: string]: boolean }>({});
@@ -118,7 +118,7 @@ const MultyTab: React.FC<MultyTabProps> = ({ userList }) => {
     }, []);
 
     const deleteTotalItemMulty = useCallback((index: number) => {
-        setTotalItemsMulty(prevItems => prevItems.length <= 1 ? prevItems : prevItems.filter((_, i) => i !== index));
+        setTotalItemsMulty(prevItems => prevItems.filter((_, i) => i !== index));
     }, []);
 
     const updateUserItemMulty = useCallback((userId: string, index: number, field: 'text' | 'num', value: string) => {
@@ -193,7 +193,7 @@ const MultyTab: React.FC<MultyTabProps> = ({ userList }) => {
         setError(null); // Clear error on success
         if (!debtReceiverUser || selectedUsersMulty.length === 0) return;
         
-        const deptId = ID.unique();
+        const deptId = Date.now().toString();
         try {
             const debtPromises: Promise<any>[] = [];
 
@@ -208,7 +208,6 @@ const MultyTab: React.FC<MultyTabProps> = ({ userList }) => {
                     selectedUsersMulty.forEach(user => {
                         if (user.id === debtReceiverUser.id) return; // Пропускаємо отримувача
 
-                        const documentId = ID.unique();
                         const sharedDebt = {
                             deptId: deptId,
                             fromUserId: user.id,
@@ -217,16 +216,11 @@ const MultyTab: React.FC<MultyTabProps> = ({ userList }) => {
                                 ? `${totalItem.text} (спільні витрати)` 
                                 : 'Без опису (спільні витрати)',
                             amount: perUserShare,
-                            createdAt: new Date().toISOString(),
+                            createdAt: new Date(),
                         };
 
                         debtPromises.push(
-                            databases.createDocument(
-                                APPWRITE.databases.main,
-                                APPWRITE.databases.collections.debts,
-                                documentId,
-                                sharedDebt
-                            )
+                            addDoc(collection(db, 'debts'), sharedDebt)
                         );
                     });
                 }
@@ -240,23 +234,17 @@ const MultyTab: React.FC<MultyTabProps> = ({ userList }) => {
                 const userItems = userItemsMulty[user.id] || [];
                 userItems.forEach(item => {
                     if (item.num) {
-                        const documentId = ID.unique();
                         const personalDebt = {
                             deptId: deptId,
                             fromUserId: user.id,
                             toUserId: debtReceiverUser.id,
                             text: item.text?.trim() || 'Без опису',
                             amount: Number(Number(item.num).toFixed(2)),
-                            createdAt: new Date().toISOString(),
+                            createdAt: new Date(),
                         };
 
                         debtPromises.push(
-                            databases.createDocument(
-                                APPWRITE.databases.main,
-                                APPWRITE.databases.collections.debts,
-                                documentId,
-                                personalDebt
-                            )
+                            addDoc(collection(db, 'debts'), personalDebt)
                         );
                     }
                 });
@@ -270,7 +258,7 @@ const MultyTab: React.FC<MultyTabProps> = ({ userList }) => {
                 setIsSuccess(false);
                 setConfirmModalVisible(false);
                 // Reset form
-                setTotalItemsMulty([{ id: 'totalItem1', text: '', num: '0' }]);
+                setTotalItemsMulty([]);
                 setUserItemsMulty({});
                 setSelectedUsersMulty([]);
                 setDebtReceiverUser(null);
@@ -425,6 +413,16 @@ const MultyTab: React.FC<MultyTabProps> = ({ userList }) => {
                     </View>
                 </TouchableOpacity>
                 <ScrollView nestedScrollEnabled={true} style={{maxHeight: 300}}>
+                    {/* Додаємо кнопку, якщо totalItemsMulty.length === 0 */}
+                    {isTotalDropdownOpen && totalItemsMulty.length === 0 && (
+                        <TouchableOpacity 
+                            style={styles.addFirstItemButton}
+                            onPress={handleAddTotalItem}
+                        >
+                            <MaterialIcons name="add" size={24} color="grey" />
+                            <Text style={styles.addFirstItemText}>Додати спільний борг</Text>
+                        </TouchableOpacity>
+                    )}
                     {isTotalDropdownOpen && totalItemsMulty.map((item, index) => (
                         <DebtItemComponent
                             ref={index === totalItemsMulty.length - 1 ? lastItemRef : null}
@@ -436,7 +434,7 @@ const MultyTab: React.FC<MultyTabProps> = ({ userList }) => {
                             onNumChange={(num) => updateDebtItemMultyTotal(index, 'num', num)}
                             onDelete={() => deleteTotalItemMulty(index)}
                             isLast={index === totalItemsMulty.length - 1}
-                            isOnly={totalItemsMulty.length === 1}
+                            isOnly={false} // <-- дозволяє видаляти всі поля
                             onAdd={handleAddTotalItem}
                         />
                     ))}
@@ -468,7 +466,7 @@ const MultyTab: React.FC<MultyTabProps> = ({ userList }) => {
                     </TouchableOpacity>
                     {userDropdownOpen[user.id] && (
                         <ScrollView nestedScrollEnabled={true} style={{maxHeight: 300}}>
-                            {/* Спочатку показуємо кнопку додавання, якщо немає елементів */}
+                            {/* Кнопка додавання, якщо немає елементів */}
                             {(!userItemsMulty[user.id] || userItemsMulty[user.id].length === 0) ? (
                                 <TouchableOpacity 
                                     style={styles.addFirstItemButton}
@@ -478,7 +476,6 @@ const MultyTab: React.FC<MultyTabProps> = ({ userList }) => {
                                     <Text style={styles.addFirstItemText}>Додати персональний борг</Text>
                                 </TouchableOpacity>
                             ) : (
-                                // Показуємо список елементів, якщо вони є
                                 (userItemsMulty[user.id] || []).map((item, index) => (
                                     <DebtItemComponent
                                         ref={index === (userItemsMulty[user.id] || []).length - 1 ? lastItemRef : null}
@@ -490,7 +487,7 @@ const MultyTab: React.FC<MultyTabProps> = ({ userList }) => {
                                         onNumChange={(num) => updateUserItemMulty(user.id, index, 'num', num)}
                                         onDelete={() => deleteUserItemMulty(user.id, index)}
                                         isLast={index === (userItemsMulty[user.id] || []).length - 1}
-                                        isOnly={(userItemsMulty[user.id] || []).length === 1}
+                                        isOnly={false}
                                         onAdd={() => handleAddUserItem(user.id)}
                                     />
                                 ))
@@ -498,9 +495,9 @@ const MultyTab: React.FC<MultyTabProps> = ({ userList }) => {
                         </ScrollView>
                     )}
                 </View>
-            ))}
+            ))
 
-
+        }
             {/* Bottom Add Debt Button for Multy */}
             <TouchableOpacity
                 style={[styles.createButton, styles.multyCreateButton]}

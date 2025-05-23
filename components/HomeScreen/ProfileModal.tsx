@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, Modal, StyleSheet, TouchableOpacity, TextInput, Alert, Image } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
-import { useAppwrite } from '../../contexts/AppwriteContext';
-import { APPWRITE } from '../../contexts/AppwriteContext';
+import { useFirebase } from '../../contexts/FirebaseContext';
 import * as ImagePicker from 'expo-image-picker';
-import { ID } from 'react-native-appwrite';
 import { router } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { updateDoc, doc } from 'firebase/firestore';
+import { signOut } from 'firebase/auth';
 
 interface ProfileModalProps {
     visible: boolean;
@@ -14,7 +14,7 @@ interface ProfileModalProps {
 }
 
 const ProfileModal: React.FC<ProfileModalProps> = ({ visible, onClose }) => {
-    const { user, databases, storage, getCurrentUser, account, setUser } = useAppwrite();
+    const { user, db, getCurrentUser, setUser, auth } = useFirebase();
     const [name, setName] = useState('');
     const [secondName, setSecondName] = useState('');
     const [isLoading, setIsLoading] = useState(false);
@@ -25,26 +25,21 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ visible, onClose }) => {
             setName(user.name || '');
             setSecondName(user.secondName || '');
             if (user.avatar) {
-                const avatarUrl = storage.getFileView(APPWRITE.storage.avatars, user.avatar).href;
-                setAvatarUri(avatarUrl);
+                setAvatarUri(user.avatar); // Якщо avatar - це url
+            } else {
+                setAvatarUri(null);
             }
         }
     }, [user]);
 
     const handleSave = async () => {
         if (!user || !name.trim()) return;
-        
         setIsLoading(true);
         try {
-            await databases.updateDocument(
-                APPWRITE.databases.main,
-                APPWRITE.databases.collections.users,
-                user.id,
-                {
-                    name: name.trim(),
-                    secondName: secondName.trim(),
-                }
-            );
+            await updateDoc(doc(db, 'users', user.id), {
+                name: name.trim(),
+                secondName: secondName.trim(),
+            });
             await getCurrentUser();
             onClose();
         } catch (error) {
@@ -57,8 +52,8 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ visible, onClose }) => {
 
     const handleLogout = async () => {
         try {
-            await account.deleteSession('current');
-            await AsyncStorage.clear(); // Очищаємо весь кеш
+            await signOut(auth);
+            await AsyncStorage.clear();
             setUser(null);
             onClose();
             router.replace('/');
