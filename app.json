@@ -2,10 +2,10 @@
   "expo": {
     "name": "eBorg",
     "slug": "eBorg",
-    "version": "1.1.1",
+    "version": "2.1.1",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "myapp",
+    "scheme": "eborg",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
@@ -21,8 +21,13 @@
         "backgroundColor": "#ffffff"
       },
       "softwareKeyboardLayoutMode": "pan",
-      "package": "com.yaroslav24.eBorg",
-      "icon": "./assets/images/icon.png"
+      "package": "yaroslav.eborg",
+      "icon": "./assets/images/icon.png",
+      "googleServicesFile": "./contexts/google-services.json",
+      "notification": {
+        "icon": "./assets/images/notification-icon.png",
+        "color": "#ffffff"
+      }
     },
     "androidStatusBar": {
       "backgroundColor": "#ffffff",
@@ -35,6 +40,13 @@
     },
     "plugins": [
       "expo-router",
+      "@react-native-firebase/app",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Дозвольте додатку використовувати камеру для сканування QR-кодів чеків."
+        }
+      ],
       [
         "expo-splash-screen",
         {

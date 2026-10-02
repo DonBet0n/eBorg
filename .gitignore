@@ -36,3 +36,14 @@ yarn-error.*
 *.tsbuildinfo
 
 app-example
+
+# Firebase & DB
+google-services.json
+GoogleService-Info.plist
+contexts/firebaseConfig.ts
+contexts/google-services.json
+*firebase-adminsdk*.json
+
+# Native: генеруються з app.json через expo prebuild
+/android
+/ios

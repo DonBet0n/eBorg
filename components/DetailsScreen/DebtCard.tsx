@@ -1,14 +1,16 @@
 import React, { useState, useRef } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Animated, GestureResponderEvent, Modal, TextInput } from 'react-native';
-import { Debt } from '../../types/debt';
-import { formatAmount } from '../../utils/debtCalculations';
+import { View, Text, TouchableOpacity, StyleSheet, Animated, GestureResponderEvent, Modal, TextInput, Image } from 'react-native';
+import { Transaction } from '../../types/debt';
+import { formatAmount, pluralize, PAYMENT_TEXT } from '../../utils/debtCalculations';
+import { useAppTheme } from '../../contexts/ThemeContext';
 
 interface DebtCardProps {
     id: string;
     fromUser: string;
+    userAvatar?: string;
     items: {
-        date: string;
-        items: Debt[];
+        date: Date;
+        items: Transaction[];
         totalAmount: number;
         isPayment: boolean;
     }[];
@@ -19,7 +21,7 @@ interface DebtCardProps {
 }
 
 const DebtCard: React.FC<DebtCardProps> = ({
-    id, fromUser, items = [], totalAmount, onPress, onPayPress, onRejectPress
+    id, fromUser, userAvatar, items = [], totalAmount, onPress, onPayPress, onRejectPress
 }) => {
   const [selectedButton, setSelectedButton] = useState<'pay' | 'reject' | null>(null);
   const [isAnimating, setIsAnimating] = useState(false);
@@ -27,6 +29,7 @@ const DebtCard: React.FC<DebtCardProps> = ({
   const animatedWidth = useRef(new Animated.Value(1)).current;
   const [paymentModalVisible, setPaymentModalVisible] = useState(false);
   const [paymentAmount, setPaymentAmount] = useState('');
+  const { colors, textScale, currencySymbol } = useAppTheme();
   const canPay = totalAmount < 0; // Можемо платити тільки якщо ми винні (від'ємний баланс)
 
   const resetButtons = (callback?: () => void) => {
@@ -115,7 +118,7 @@ const DebtCard: React.FC<DebtCardProps> = ({
   };
 
   const handleMaxAmount = () => {
-    setPaymentAmount(Math.abs(totalAmount).toString());
+    setPaymentAmount(Number(Math.abs(totalAmount).toFixed(2)).toString());
   };
 
   const getButtonContainerStyle = (type: 'pay' | 'reject') => {
@@ -163,18 +166,36 @@ const DebtCard: React.FC<DebtCardProps> = ({
   return (
     <>
       <TouchableOpacity 
-        style={styles.container} 
+        style={[styles.container, { 
+          backgroundColor: colors.card, 
+          borderColor: colors.border,
+          shadowColor: colors.shadow,
+          shadowOffset: { width: 0, height: 2 },
+          shadowOpacity: 0.1,
+          shadowRadius: 4,
+          elevation: 3
+        }]} 
         onPress={handleContainerPress}
         disabled={!!selectedButton || isAnimating}
       >
         <View style={styles.headerRow}>
-          <Text style={styles.userName}>{fromUser}</Text>
+          <View style={{flexDirection: 'row', alignItems: 'center'}}>
+            {userAvatar ? (
+              <Image source={{ uri: userAvatar }} style={{ width: 44, height: 44, borderRadius: 22, marginRight: 12 }} />
+            ) : (
+              <View style={styles.avatar}>
+                <Text style={styles.avatarText}>{fromUser.charAt(0).toUpperCase()}</Text>
+              </View>
+            )}
+            <Text style={[styles.userName, { color: colors.text, fontSize: 18 * textScale }]} numberOfLines={1}>{fromUser}</Text>
+          </View>
           <Text style={[
             styles.totalAmount,
-            { color: totalAmount === 0 ? '#666' : 
-                     totalAmount > 0 ? '#4CAF50' : '#E53935' }
+            { color: totalAmount === 0 ? colors.textSecondary : 
+                     totalAmount > 0 ? colors.positiveText : colors.negativeText,
+              fontSize: 18 * textScale }
           ]}>
-            {totalAmount > 0 ? '+' : ''}{formatAmount(totalAmount || 0)} грн
+            {totalAmount > 0 ? '+' : ''}{formatAmount(totalAmount || 0)} {currencySymbol}
           </Text>
         </View>
         
@@ -182,35 +203,36 @@ const DebtCard: React.FC<DebtCardProps> = ({
           {(items || []).slice(0, 2).map((group, index) => (
             <View key={index} style={styles.item}>
               <View style={styles.itemHeader}>
-                <Text style={styles.itemDate}>
+                <Text style={[styles.itemDate, { color: colors.textSecondary, fontSize: 14 * textScale }]}>
                   {new Date(group.date).toLocaleDateString()}
                 </Text>
                 {group.isPayment ? (
-                  <Text style={[styles.itemText, styles.paymentText]}>
-                    Оплата боргу
+                  <Text style={[styles.itemText, styles.paymentText, { color: colors.textSecondary, fontSize: 14 * textScale }]}>
+                    {PAYMENT_TEXT}
                   </Text>
                 ) : (
-                  <Text style={styles.itemText}>
-                    {(group.items || []).length} {(group.items || []).length === 1 ? 'транзакція' : 'транзакції'}
+                  <Text style={[styles.itemText, { color: colors.textSecondary, fontSize: 14 * textScale }]}>
+                    {(group.items || []).length} {pluralize((group.items || []).length, 'транзакція', 'транзакції', 'транзакцій')}
                   </Text>
                 )}
                 <Text style={[
                   styles.itemPrice,
-                  group.isPayment ? styles.paymentAmount : (
-                    group.totalAmount > 0 ? styles.positiveAmount : styles.negativeAmount
+                  { fontSize: 14 * textScale },
+                  group.isPayment ? [styles.paymentAmount, { color: colors.text }] : (
+                    group.totalAmount > 0 ? { color: colors.positiveText } : { color: colors.negativeText }
                   )
                 ]}>
                   {group.isPayment 
-                    ? `${formatAmount(group.totalAmount || 0)} грн`
-                    : `${group.totalAmount > 0 ? '+' : ''}${formatAmount(group.totalAmount || 0)} грн`
+                    ? `${formatAmount(group.totalAmount || 0)} ${currencySymbol}`
+                    : `${group.totalAmount > 0 ? '+' : ''}${formatAmount(group.totalAmount || 0)} ${currencySymbol}`
                   }
                 </Text>
               </View>
             </View>
           ))}
           {(items || []).length > 2 && (
-            <Text style={styles.moreItems}>
-              ... та ще {items.length - 2} {items.length - 2 > 2 ? 'груп' : 'групи'}
+            <Text style={[styles.moreItems, { color: colors.textSecondary, fontSize: 14 * textScale }]}>
+              ... та ще {items.length - 2} {pluralize(items.length - 2, 'група', 'групи', 'груп')}
             </Text>
           )}
         </View>
@@ -222,7 +244,7 @@ const DebtCard: React.FC<DebtCardProps> = ({
               onPress={(e) => handleButtonPress('reject', e)}
               disabled={isAnimating}
             >
-              <Text style={styles.buttonText}>{getButtonText('reject')}</Text>
+              <Text style={[styles.buttonText, { fontSize: 14 * textScale }]}>{getButtonText('reject')}</Text>
             </TouchableOpacity>
           </Animated.View>
           <Animated.View style={[styles.buttonWrapper, getButtonContainerStyle('pay')]}>
@@ -233,6 +255,7 @@ const DebtCard: React.FC<DebtCardProps> = ({
             >
               <Text style={[
                 styles.buttonText,
+                { fontSize: 14 * textScale },
                 !canPay && styles.disabledButtonText
               ]}>
                 {getButtonText('pay')}
@@ -246,43 +269,52 @@ const DebtCard: React.FC<DebtCardProps> = ({
         visible={paymentModalVisible}
         transparent={true}
         animationType="fade"
+        statusBarTranslucent={true}
         onRequestClose={handlePaymentCancel}
       >
         <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Оплата боргу</Text>
-            <Text style={styles.modalSubtitle}>
-              Загальний борг: {formatAmount(Math.abs(totalAmount))} грн
-            </Text>
+          <View style={[styles.modalContent, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            <Text style={[styles.modalTitle, { color: colors.text, fontSize: 18 * textScale }]}>{PAYMENT_TEXT}</Text>
+            
+            {/* Натискання підставляє всю суму боргу в поле */}
+            <TouchableOpacity style={styles.amountInfoContainer} onPress={handleMaxAmount} activeOpacity={0.6}>
+              <Text style={[styles.amountInfoLabel, { color: colors.textSecondary, fontSize: 14 * textScale }]}>До сплати:</Text>
+              <Text style={[styles.amountInfoValue, { color: colors.text, fontSize: 18 * textScale }]}>
+                {formatAmount(Math.abs(totalAmount))} {currencySymbol}
+              </Text>
+            </TouchableOpacity>
 
             <View style={styles.inputContainer}>
               <TextInput
-                style={styles.input}
+                style={[styles.paymentInput, { backgroundColor: colors.inputBg, color: colors.text, borderColor: colors.border, fontSize: 24 * textScale }]}
                 keyboardType="numeric"
                 value={paymentAmount}
-                onChangeText={setPaymentAmount}
-                placeholder="Введіть суму"
+                onChangeText={(text) => {
+                  // На українській клавіатурі десятковий роздільник — кома, тому приводимо її до крапки
+                  const cleaned = text.replace(/,/g, '.').replace(/[^0-9.]/g, '');
+                  const [whole, ...fraction] = cleaned.split('.');
+                  if (fraction.length > 1) return;
+                  setPaymentAmount(fraction.length ? `${whole}.${fraction[0].slice(0, 2)}` : whole);
+                }}
+                placeholder="0.00"
+                placeholderTextColor={colors.textSecondary}
+                autoFocus
               />
-              <TouchableOpacity
-                style={styles.maxButton}
-                onPress={handleMaxAmount}
-              >
-                <Text style={styles.maxButtonText}>MAX</Text>
-              </TouchableOpacity>
+              <Text style={[styles.currencyLabel, { color: colors.textSecondary, fontSize: 24 * textScale }]}>{currencySymbol}</Text>
             </View>
 
             <View style={styles.modalButtons}>
               <TouchableOpacity
-                style={[styles.modalButton, styles.cancelButton]}
-                onPress={handlePaymentCancel}  // Змінюємо обробник
+                style={[styles.modalButton, styles.cancelButton, { borderColor: colors.border }]}
+                onPress={handlePaymentCancel}
               >
-                <Text style={styles.modalButtonText}>Скасувати</Text>
+                <Text style={[styles.modalButtonText, { color: colors.text, fontSize: 16 * textScale }]}>Скасувати</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.modalButton, styles.confirmButton]}
+                style={[styles.modalButton, styles.confirmButton, { backgroundColor: colors.buttonBg }]}
                 onPress={handlePayConfirm}
               >
-                <Text style={styles.modalButtonText}>Підтвердити</Text>
+                <Text style={[styles.modalButtonText, { color: colors.buttonText, fontSize: 16 * textScale }]}>Підтвердити</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -303,11 +335,6 @@ const styles = StyleSheet.create({
     padding: 15,
     marginVertical: 8,
     marginHorizontal: 16,
-    //shadowColor: '#000',
-    //shadowOffset: { width: 0, height: 2 },
-    //shadowOpacity: 0.1,
-    //shadowRadius: 4,
-    //elevation: 3,
   },
   headerRow: {
     flexDirection: 'row',
@@ -318,7 +345,20 @@ const styles = StyleSheet.create({
   userName: {
     fontSize: 18,
     fontFamily: 'MontserratBold',
-    marginBottom: 10,
+  },
+  avatar: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#E0E0E0',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  avatarText: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#666',
   },
   itemsContainer: {
     marginBottom: 10,
@@ -329,12 +369,12 @@ const styles = StyleSheet.create({
     marginBottom: 5,
   },
   itemText: {
-    fontSize: 16, // Збільшено з 14
+    fontSize: 16,
     fontFamily: 'Montserrat',
     color: '#666',
   },
   itemPrice: {
-    fontSize: 16, // Збільшено з 14
+    fontSize: 16,
     fontFamily: 'Montserrat',
     color: '#666',
   },
@@ -364,7 +404,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   payButton: {
-    backgroundColor: '#4CAF50', // Зелений колір
+    backgroundColor: '#4CAF50',
   },
   rejectButton: {
     backgroundColor: '#E53935',
@@ -400,6 +440,7 @@ const styles = StyleSheet.create({
   inputContainer: {
     flexDirection: 'row',
     marginBottom: 20,
+    alignItems: 'center',
   },
   input: {
     flex: 1,
@@ -409,6 +450,28 @@ const styles = StyleSheet.create({
     padding: 10,
     marginRight: 10,
     fontSize: 16,
+  },
+  paymentInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: 10,
+    marginRight: 10,
+    textAlign: 'center',
+  },
+  currencyLabel: {
+    fontFamily: 'Montserrat',
+  },
+  amountInfoContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 15,
+  },
+  amountInfoLabel: {
+    fontFamily: 'Montserrat',
+  },
+  amountInfoValue: {
+    fontFamily: 'MontserratBold',
   },
   maxButton: {
     backgroundColor: '#666666', // Змінюємо також колір кнопки MAX

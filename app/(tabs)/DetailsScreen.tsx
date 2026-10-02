@@ -1,18 +1,29 @@
-import React, { useState, useEffect } from 'react';
-import { View, FlatList, Modal, Text, ScrollView, TouchableOpacity, StyleSheet, RefreshControl } from 'react-native';
+import React, { useState, useMemo } from 'react';
+import { View, FlatList, Modal, Text, ScrollView, TouchableOpacity, RefreshControl } from 'react-native';
 import DebtCard from '../../components/DetailsScreen/DebtCard';
 import { useFirebase } from '../../contexts/FirebaseContext';
 import detailsStyles from '../../styles/DetailsStyles';
-import { useFocusEffect } from '@react-navigation/native';
-import { Debt } from '../../types/debt';
-import { ID } from 'react-native-appwrite';
+import { DebtGroup, Transaction } from '../../types/debt';
 import { MaterialIcons } from '@expo/vector-icons';
-import { formatAmount } from '../../utils/debtCalculations';
-import { addDoc, deleteDoc, doc, collection } from 'firebase/firestore';
+import { formatAmount, PAYMENT_TEXT, PAYMENT_TYPE } from '../../utils/debtCalculations';
+
+import { useAppTheme } from '../../contexts/ThemeContext';
+
+interface GroupedTransaction {
+    date: Date;
+    items: Transaction[];
+    totalAmount: number;
+    isPayment: boolean;
+}
+
+interface SelectedDebt extends Omit<DebtGroup, 'items'> {
+    items: GroupedTransaction[];
+}
 
 const DetailsScreen = () => {
-  const { getUserDebts, user, db, debts, lastUpdate, triggerDebtsRefresh } = useFirebase();
-  const [selectedDebt, setSelectedDebt] = useState<any>(null);
+  const { user, debts, refreshDebts, createDebts, removeDebts, notifyUser } = useFirebase();
+  const { colors, detailsBlockSize, textScale, currencySymbol } = useAppTheme();
+  const [selectedDebt, setSelectedDebt] = useState<SelectedDebt | null>(null);
   const [modalVisible, setModalVisible] = useState(false);
   const [isRejectionMode, setIsRejectionMode] = useState(false);
   const [selectedItems, setSelectedItems] = useState<string[]>([]);
@@ -26,25 +37,20 @@ const DetailsScreen = () => {
     }));
   };
 
-  useEffect(() => {
-    triggerDebtsRefresh();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   const onRefresh = async () => {
     setRefreshing(true);
-    triggerDebtsRefresh();
-    setTimeout(() => setRefreshing(false), 500);
+    await refreshDebts();
+    setRefreshing(false);
   };
 
-  const groupDebtsByDate = (items: any[]) => {
+  const groupDebtsByDate = (items: Transaction[]): GroupedTransaction[] => {
     if (!items || items.length === 0) return [];
 
-    const grouped = items.reduce((acc: any[], item: any) => {
+    const grouped = items.reduce((acc: GroupedTransaction[], item: Transaction) => {
       if (!item) return acc;
 
       // Якщо це оплата боргу, додаємо як окремий елемент
-      if (item.text === 'Оплата боргу') {
+      if (item.isPayment) {
         acc.push({
           date: item.date,
           items: [item],
@@ -56,7 +62,7 @@ const DetailsScreen = () => {
 
       // Групуємо інші транзакції за датою
       const dateKey = new Date(item.date).toLocaleDateString();
-      const existingGroup = acc.find((group: any) => 
+      const existingGroup = acc.find((group: GroupedTransaction) => 
         !group.isPayment && 
         new Date(group.date).toLocaleDateString() === dateKey
       );
@@ -78,20 +84,28 @@ const DetailsScreen = () => {
     }, []);
 
     // Сортуємо за датою (найновіші спочатку)
-    return grouped.sort((a: any, b: any) => 
+    return grouped.sort((a: GroupedTransaction, b: GroupedTransaction) => 
       new Date(b.date).getTime() - new Date(a.date).getTime()
     );
   };
 
+  // Мемоізація групування боргів, щоб воно не викликалося при кожному кліку на розгортання
+  const groupedDebts = React.useMemo(() => {
+    return (debts || []).map(debt => ({
+      ...debt,
+      groupedItems: groupDebtsByDate(debt.items || [])
+    }));
+  }, [debts, user?.id]);
+
   const handleDebtPress = (debt: any, rejection = false) => {
-    // Групуємо борги по даті перед встановленням у selectedDebt
-    const groupedItems = groupDebtsByDate(debt.items || []);
     setSelectedDebt({
       ...debt,
-      items: groupedItems
+      items: debt.groupedItems
     });
     setIsRejectionMode(rejection);
     setSelectedItems([]);
+    // Розгорнуті групи прив'язані до номера групи, тому для іншої людини скидаємо їх
+    setExpandedGroups({});
     setModalVisible(true);
   };
 
@@ -105,13 +119,9 @@ const DetailsScreen = () => {
 
   const handleRejectItems = async () => {
     try {
-      const deletePromises = selectedItems.map(itemId =>
-        deleteDoc(doc(db, 'debts', itemId))
-      );
-      await Promise.all(deletePromises);
+      await removeDebts(selectedItems);
       setModalVisible(false);
       setSelectedItems([]);
-      triggerDebtsRefresh(); // Оновити debts
     } catch (error) {
       console.error('Error rejecting items:', error);
     }
@@ -127,40 +137,39 @@ const DetailsScreen = () => {
       // Створюємо інверсну транзакцію
       // Якщо баланс від'ємний (ми винні), то транзакція буде від нас до користувача
       // Якщо баланс додатній (нам винні), то транзакція буде від користувача до нас
-      await addDoc(collection(db, 'debts'), {
-        deptId: Date.now().toString(),
+      await createDebts([{
         fromUserId: currentDebt.totalAmount < 0 ? userId : user.id,  // Змінюємо напрямок
         toUserId: currentDebt.totalAmount < 0 ? user.id : userId,    // Змінюємо напрямок
         amount: amount,
-        text: 'Оплата боргу',
-        createdAt: new Date()
-      });
+        text: PAYMENT_TEXT,
+        type: PAYMENT_TYPE,
+      }]);
 
-      triggerDebtsRefresh(); // Оновити debts
+      notifyUser(userId, PAYMENT_TEXT, `${user.name} повернув вам ${amount} грн.`);
     } catch (error) {
       console.error('Error paying debt:', error);
     }
   };
 
+  const allItemIds = useMemo(() => (selectedDebt?.items || []).flatMap((group: GroupedTransaction) =>
+    group.items.map((item: Transaction) => item.id)
+  ), [selectedDebt]);
+  const isAllSelected = allItemIds.length > 0 && selectedItems.length === allItemIds.length;
+
   const handleSelectAll = () => {
-    if (selectedDebt) {
-      // Якщо всі елементи вже вибрані - очищаємо вибір
-      const allItems = selectedDebt.items.flatMap((group: any) => 
-        group.isPayment ? [group.items[0].id] : group.items.map((item: any) => item.id)
-      );
-      
-      if (selectedItems.length === allItems.length) {
-        setSelectedItems([]);
-      } else {
-        setSelectedItems(allItems);
-      }
-    }
+    // Якщо всі елементи вже вибрані - очищаємо вибір
+    setSelectedItems(isAllSelected ? [] : allItemIds);
   };
 
-  const renderModalItem = (group: any, groupIndex: number) => {
+  const blockPadding = detailsBlockSize === 'small' ? 4 : detailsBlockSize === 'large' ? 12 : 8;
+  const blockDateSize = (detailsBlockSize === 'small' ? 12 : detailsBlockSize === 'large' ? 16 : 14) * textScale;
+  const blockTotalSize = (detailsBlockSize === 'small' ? 16 : detailsBlockSize === 'large' ? 22 : 18) * textScale;
+  const blockItemSize = (detailsBlockSize === 'small' ? 14 : detailsBlockSize === 'large' ? 18 : 16) * textScale;
+
+  const renderModalItem = (group: GroupedTransaction, groupIndex: number) => {
     if (group.isPayment) {
       return (
-        <View style={detailsStyles.modalItem}>
+        <View key={`payment-${groupIndex}`} style={detailsStyles.modalItem}>
           <View style={[
             detailsStyles.modalItemRow,
             isRejectionMode && detailsStyles.modalSubItemWithCheckbox
@@ -173,18 +182,18 @@ const DetailsScreen = () => {
                 <MaterialIcons
                   name={selectedItems.includes(group.items[0].id) ? "check-box" : "check-box-outline-blank"}
                   size={24}
-                  color="#666"
+                  color={selectedItems.includes(group.items[0].id) ? colors.positiveText : colors.iconSecondary}
                 />
               </TouchableOpacity>
             )}
-            <Text style={[detailsStyles.modalItemText, detailsStyles.paymentText]}>
-              Оплата боргу
+            <Text style={[detailsStyles.modalItemText, detailsStyles.paymentText, { color: colors.textSecondary }]}>
+              {PAYMENT_TEXT}
             </Text>
             <View style={detailsStyles.modalItemInfo}>
-              <Text style={[detailsStyles.modalItemAmount, detailsStyles.paymentAmount]}>
-                {formatAmount(Math.abs(group.totalAmount))} грн
+              <Text style={[detailsStyles.modalItemAmount, detailsStyles.paymentAmount, { color: colors.text }]}>
+                {formatAmount(Math.abs(group.totalAmount))} {currencySymbol}
               </Text>
-              <Text style={detailsStyles.modalItemDate}>
+              <Text style={[detailsStyles.modalItemDate, { color: colors.textSecondary }]}>
                 {new Date(group.date).toLocaleDateString()}
               </Text>
             </View>
@@ -195,33 +204,34 @@ const DetailsScreen = () => {
 
     // Повертаємо групу транзакцій
     return (
-      <View style={detailsStyles.modalGroupContainer}>
+      <View key={`group-${groupIndex}`} style={[detailsStyles.modalGroupContainer, { backgroundColor: colors.card, borderColor: colors.border }]}>
         <TouchableOpacity 
-          style={detailsStyles.modalGroupHeader}
+          style={[detailsStyles.modalGroupHeader, { backgroundColor: colors.cardAlt, padding: blockPadding }]}
           onPress={() => toggleGroup(`${groupIndex}`)}
         >
           <View style={detailsStyles.modalGroupLeft}>
-            <Text style={detailsStyles.modalGroupDate}>
+            <Text style={[detailsStyles.modalGroupDate, { color: colors.textSecondary, backgroundColor: 'transparent', fontSize: blockDateSize }]}>
               {new Date(group.date).toLocaleDateString()}
             </Text>
             <MaterialIcons 
               name={expandedGroups[`${groupIndex}`] ? "keyboard-arrow-up" : "keyboard-arrow-down"} 
               size={24} 
-              color="#666" 
+              color={colors.iconSecondary} 
             />
           </View>
           <Text style={[
             detailsStyles.modalGroupTotal,
-            { color: group.totalAmount >= 0 ? '#4CAF50' : '#E53935' }
+            { color: group.totalAmount >= 0 ? colors.positiveText : colors.negativeText, fontSize: blockTotalSize }
           ]}>
-            {group.totalAmount > 0 ? '+' : ''}{formatAmount(group.totalAmount)} грн
+            {group.totalAmount > 0 ? '+' : ''}{formatAmount(group.totalAmount)} {currencySymbol}
           </Text>
         </TouchableOpacity>
         {expandedGroups[`${groupIndex}`] && (
           <View style={detailsStyles.modalSubItemsContainer}>
-            {group.items.map((item: any, itemIndex: number) => (
+            {group.items.map((item: Transaction, itemIndex: number) => (
               <View key={`${groupIndex}-${itemIndex}`} style={[
                 detailsStyles.modalSubItem,
+                { borderTopColor: colors.border, padding: blockPadding },
                 isRejectionMode && detailsStyles.modalSubItemWithCheckbox
               ]}>
                 {isRejectionMode && (
@@ -232,19 +242,19 @@ const DetailsScreen = () => {
                     <MaterialIcons
                       name={selectedItems.includes(item.id) ? "check-box" : "check-box-outline-blank"}
                       size={24}
-                      color="#666"
+                      color={selectedItems.includes(item.id) ? colors.positiveText : colors.iconSecondary}
                     />
                   </TouchableOpacity>
                 )}
-                <Text style={detailsStyles.modalItemText} numberOfLines={1}>
+                <Text style={[detailsStyles.modalItemText, { color: colors.textSecondary, fontSize: blockItemSize }]} numberOfLines={1}>
                   {item.text}
                 </Text>
                 <Text style={[
                   detailsStyles.modalItemAmount,
-                  { color: item.fromUserId === user?.id ? '#E53935' : '#4CAF50' }
+                  { color: item.fromUserId === user?.id ? colors.negativeText : colors.positiveText, fontSize: blockItemSize }
                 ]}>
                   {item.fromUserId === user?.id ? '-' : '+'}
-                  {Math.abs(item.amount)} грн
+                  {formatAmount(Math.abs(item.amount))} {currencySymbol}
                 </Text>
               </View>
             ))}
@@ -255,23 +265,25 @@ const DetailsScreen = () => {
   };
 
   return (
-    <View style={detailsStyles.container}>
+    <View style={[detailsStyles.container, { backgroundColor: colors.background }]}>
       <FlatList
-        data={debts || []}
+        data={groupedDebts}
         keyExtractor={(item) => item.userId}
+
         renderItem={({ item }) => {
-          // Групуємо транзакції перед передачею в DebtCard
-          const groupedItems = groupDebtsByDate(item.items || []);
           return (
-            <DebtCard
-              id={item.userId}
-              fromUser={item.userName || 'Завантаження...'}
-              items={groupedItems} // Передаємо вже згруповані дані
-              totalAmount={item.totalAmount || 0}
-              onPress={() => handleDebtPress(item)}
-              onPayPress={(amount) => handlePayDebt(item.userId, amount)}
-              onRejectPress={() => handleDebtPress(item, true)}
-            />
+            <View>
+              <DebtCard
+                id={item.userId}
+                fromUser={item.userName || 'Завантаження...'}
+                userAvatar={item.userAvatar}
+                items={item.groupedItems} // Передаємо вже згруповані дані
+                totalAmount={item.totalAmount || 0}
+                onPress={() => handleDebtPress(item)}
+                onPayPress={(amount) => handlePayDebt(item.userId, amount)}
+                onRejectPress={() => handleDebtPress(item, true)}
+              />
+            </View>
           );
         }}
         refreshControl={
@@ -281,47 +293,45 @@ const DetailsScreen = () => {
 
       <Modal
         visible={modalVisible}
-        animationType="slide"
+        animationType="fade"
         transparent={true}
+        statusBarTranslucent={true}
         onRequestClose={() => setModalVisible(false)}
       >
         <View style={detailsStyles.modalOverlay}>
-          <View style={detailsStyles.modalContent}>
+          <View style={[detailsStyles.modalContent, { backgroundColor: colors.background }]}>
             <View style={detailsStyles.modalTitleContainer}>
-              <Text style={detailsStyles.modalTitle}>Баланс</Text>
+              <Text style={[detailsStyles.modalTitle, { color: colors.text }]}>Баланс</Text>
               {isRejectionMode && (
                 <TouchableOpacity
                   style={detailsStyles.selectAllContainer}
                   onPress={handleSelectAll}
                 >
                   <MaterialIcons
-                    name={selectedDebt?.items?.flatMap((group: any) => 
-                      group.isPayment ? [group.items[0].id] : group.items.map((item: any) => item.id)
-                    ).length === selectedItems.length ? "check-box" : "check-box-outline-blank"}
+                    name={isAllSelected ? "check-box" : "check-box-outline-blank"}
                     size={24}
-                    color="#666"
+                    color={isAllSelected ? colors.positiveText : colors.iconSecondary}
                   />
-                  <Text style={detailsStyles.selectAllText}>Вибрати всі</Text>
+                  <Text style={[detailsStyles.selectAllText, { color: colors.textSecondary }]}>Вибрати всі</Text>
                 </TouchableOpacity>
               )}
               <Text style={[
-                detailsStyles.modalSubtitle,
-                { color: selectedDebt?.totalAmount === 0 ? '#666' : 
-                         selectedDebt?.totalAmount > 0 ? '#4CAF50' : '#E53935' }
+                detailsStyles.modalTotalAmount,
+                { color: (selectedDebt?.totalAmount ?? 0) === 0 ? colors.textSecondary : 
+                        (selectedDebt?.totalAmount ?? 0) > 0 ? colors.positiveText : colors.negativeText }
               ]}>
-                {selectedDebt?.totalAmount > 0 ? '+' : ''}{selectedDebt?.totalAmount ? formatAmount(selectedDebt.totalAmount) : 0} грн
+                {(selectedDebt?.totalAmount ?? 0) > 0 ? '+' : ''}
+                {formatAmount(selectedDebt?.totalAmount ?? 0)} {currencySymbol}
               </Text>
             </View>
             
             <ScrollView style={detailsStyles.modalScroll}>
               {selectedDebt?.items ? (
-                selectedDebt.items.map((group: any, groupIndex: number) => (
-                  <View key={groupIndex}>
-                    {renderModalItem(group, groupIndex)}
-                  </View>
+                selectedDebt.items.map((group: GroupedTransaction, groupIndex: number) => (
+                  renderModalItem(group, groupIndex)
                 ))
               ) : (
-                <Text style={detailsStyles.noDataText}>Немає транзакцій</Text>
+                <Text style={[detailsStyles.noDataText, { color: colors.textSecondary }]}>Немає транзакцій</Text>
               )}
             </ScrollView>
 
@@ -330,21 +340,22 @@ const DetailsScreen = () => {
                 <TouchableOpacity 
                   style={[
                     detailsStyles.modalCloseButton,
+                    { backgroundColor: colors.buttonBg },
                     selectedItems.length === 0 && detailsStyles.modalButtonDisabled
                   ]}
                   onPress={handleRejectItems}
                   disabled={selectedItems.length === 0}
                 >
-                  <Text style={detailsStyles.modalCloseButtonText}>
+                  <Text style={[detailsStyles.modalCloseButtonText, { color: colors.buttonText }]}>
                     Відхилити вибрані ({selectedItems.length})
                   </Text>
                 </TouchableOpacity>
               ) : (
                 <TouchableOpacity 
-                  style={detailsStyles.modalCloseButton} 
+                  style={[detailsStyles.modalCloseButton, { backgroundColor: colors.buttonBg }]} 
                   onPress={() => setModalVisible(false)}
                 >
-                  <Text style={detailsStyles.modalCloseButtonText}>Закрити</Text>
+                  <Text style={[detailsStyles.modalCloseButtonText, { color: colors.buttonText }]}>Закрити</Text>
                 </TouchableOpacity>
               )}
             </View>

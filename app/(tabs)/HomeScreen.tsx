@@ -1,16 +1,18 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Image, RefreshControl } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
-import { useFocusEffect } from '@react-navigation/native';
 import ProfileModal from '../../components/HomeScreen/ProfileModal';
-import { calculateDebts, formatCurrency, formatAmount } from '../../utils/debtCalculations';
+import SettingsModal from '../../components/SettingsModal';
+import { formatCurrency, formatAmount } from '../../utils/debtCalculations';
 import { useFirebase } from '../../contexts/FirebaseContext';
-import { Statistics, Debt } from '../../types/debt';
+import { useAppTheme } from '../../contexts/ThemeContext';
+import Animated, { FadeInUp, LinearTransition } from 'react-native-reanimated';
 
 const HomeScreen = () => {
   const [isProfileModalVisible, setIsProfileModalVisible] = useState(false);
-  const { user, getCurrentUser, debts, isOnline, statistics, triggerDebtsRefresh } = useFirebase();
-  const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
+  const [isSettingsVisible, setIsSettingsVisible] = useState(false);
+  const { user, getCurrentUser, debts, isOnline, statistics, refreshDebts } = useFirebase();
+  const { colors, textScale, showDecimalsBalance, showDecimalsStatistics, wrapStatisticsText, currencySymbol } = useAppTheme();
   const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
@@ -18,7 +20,6 @@ const HomeScreen = () => {
       if (!user) {
         await getCurrentUser();
       }
-      triggerDebtsRefresh();
     };
     init();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -26,15 +27,25 @@ const HomeScreen = () => {
 
   const onRefresh = async () => {
     setRefreshing(true);
-    triggerDebtsRefresh();
-    setTimeout(() => setRefreshing(false), 500); // або після await getUserDebts()
+    await refreshDebts();
+    setRefreshing(false);
   };
 
   const isPositive = statistics.totalBalance > 0;
   const isZero = statistics.totalBalance === 0;
 
+  const formatBalance = (amount: number) => {
+    if (!showDecimalsBalance) return Math.trunc(amount).toString();
+    return formatCurrency(amount);
+  };
+
+  const formatStat = (amount: number) => {
+    if (!showDecimalsStatistics) return Math.trunc(amount).toString();
+    return formatAmount(amount);
+  };
+
   return (
-    <View style={styles.conteinter}>
+    <View style={[styles.conteinter, { backgroundColor: colors.background }]}>
       {!isOnline && (
         <View style={styles.offlineBar}>
           <Text style={styles.offlineText}>
@@ -43,21 +54,27 @@ const HomeScreen = () => {
         </View>
       )}
       {/* Header */}
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>eBorg</Text>
+      <View style={[styles.header, { backgroundColor: colors.background, borderBottomColor: colors.border }]}>
+        <TouchableOpacity 
+          style={styles.headerLeft}
+          onPress={() => setIsSettingsVisible(true)}
+        >
+          <MaterialIcons name="settings" size={28} color={colors.icon} />
+        </TouchableOpacity>
+        <Text style={[styles.headerTitle, { color: colors.text }]}>eBorg</Text>
         <TouchableOpacity 
           style={styles.headerRight}
           onPress={() => setIsProfileModalVisible(true)}
         >
           <View style={styles.profileInfo}>
-            <Text style={styles.userName}>{user?.name || 'Гість'}</Text>
+            <Text style={[styles.userName, { color: colors.text }]}>{user?.name || 'Гість'}</Text>
             {user?.avatar ? (
               <Image 
                 source={{ uri: user.avatar }}
                 style={styles.avatarImage}
               />
             ) : (
-              <MaterialIcons name="account-circle" size={42} color="black" />
+              <MaterialIcons name="account-circle" size={42} color={colors.icon} />
             )}
           </View>
         </TouchableOpacity>
@@ -72,93 +89,130 @@ const HomeScreen = () => {
         {/* Main balance block */}
         <View style={[
           styles.debtCard, 
-          isZero ? styles.neutralBackground : isPositive ? styles.positiveBackground : styles.negativeBackground
+          { backgroundColor: isZero ? colors.neutralBg : isPositive ? colors.positiveBg : colors.negativeBg, elevation: 0, shadowOpacity: 0 }
         ]}>
           <View style={styles.debtCardHeader}>
             <MaterialIcons 
               name={isZero ? "remove-circle" : isPositive ? "arrow-circle-up" : "arrow-circle-down"} 
               size={32} 
-              color={isZero ? "#757575" : isPositive ? "#2E7D32" : "#C62828"} 
+              color={isZero ? colors.neutralText : isPositive ? colors.positiveText : colors.negativeText} 
             />
-            <Text style={styles.debtLabel}>Загальний баланс</Text>
+            <Text style={[styles.debtLabel, { color: colors.textSecondary, fontSize: 16 * textScale }]}>Загальний баланс</Text>
           </View>
           <Text style={[styles.debtAmount, 
-            isZero ? styles.neutralText : isPositive ? styles.positiveText : styles.negativeText
+            { color: isZero ? colors.neutralText : isPositive ? colors.positiveText : colors.negativeText, fontSize: 36 * textScale }
           ]}>
-            {isPositive ? '+' : ''}{formatCurrency(statistics.totalBalance)}
+            {isPositive ? '+' : ''}{formatBalance(statistics.totalBalance)}
           </Text>
-          <Text style={styles.debtDescription}>
+          <Text style={[styles.debtDescription, { color: colors.textSecondary, fontSize: 16 * textScale }]}>
             {isZero ? '' : isPositive ? 'Ви в плюсі' : 'Ви в мінусі'}
           </Text>
         </View>
 
         {/* Statistics */}
         <View style={styles.statisticsContainer}>
-          <Text style={styles.sectionTitle}>Статистика боргів</Text>
-          <View style={styles.statisticsGrid}>
-            <View style={[styles.statisticItem, styles.incomingDebt]}>
-              <Text style={[styles.statisticValue, styles.positiveText]}>
-                +{formatAmount(statistics.incomingDebts)} грн
+          <Text style={[styles.sectionTitle, { color: colors.text, fontSize: 20 * textScale }]}>Статистика боргів</Text>
+          <View style={[styles.statisticsGrid, { backgroundColor: colors.card, shadowColor: colors.shadow }]}>
+            <View style={[styles.statisticItem, { backgroundColor: colors.positiveBg }]}>
+              <Text style={[styles.statisticValue, { color: colors.positiveText, fontSize: 18 * textScale }]} adjustsFontSizeToFit minimumFontScale={wrapStatisticsText ? 0.5 : undefined} numberOfLines={wrapStatisticsText ? 2 : 1}>
+                +{formatStat(statistics.incomingDebts)}{wrapStatisticsText ? '\n' : '\u00A0'}{currencySymbol}
               </Text>
-              <Text style={styles.statisticLabel}>Вам винні</Text>
+              <Text style={[styles.statisticLabel, { color: colors.textSecondary, fontSize: 14 * textScale }]}>Вам винні</Text>
             </View>
-            <View style={[styles.statisticItem, styles.outgoingDebt]}>
-              <Text style={[styles.statisticValue, styles.negativeText]}>
-                -{formatAmount(statistics.outgoingDebts)} грн
+            <View style={[styles.statisticItem, { backgroundColor: colors.negativeBg }]}>
+              <Text style={[styles.statisticValue, { color: colors.negativeText, fontSize: 18 * textScale }]} adjustsFontSizeToFit minimumFontScale={wrapStatisticsText ? 0.5 : undefined} numberOfLines={wrapStatisticsText ? 2 : 1}>
+                -{formatStat(statistics.outgoingDebts)}{wrapStatisticsText ? '\n' : '\u00A0'}{currencySymbol}
               </Text>
-              <Text style={styles.statisticLabel}>Ви винні</Text>
+              <Text style={[styles.statisticLabel, { color: colors.textSecondary, fontSize: 14 * textScale }]}>Ви винні</Text>
             </View>
             <View style={styles.statisticItem}>
-              <Text style={styles.statisticValue}>{statistics.activeDebtsCount}</Text>
-              <Text style={styles.statisticLabel}>К-сть боргів</Text>
+              <Text style={[styles.statisticValue, { color: colors.text, fontSize: 18 * textScale }]} numberOfLines={1} adjustsFontSizeToFit>{statistics.activeDebtsCount}</Text>
+              <Text style={[styles.statisticLabel, { color: colors.textSecondary, fontSize: 14 * textScale }]}>К-сть боргів</Text>
             </View>
           </View>
         </View>
 
         {/* Recent transactions */}
         <View style={styles.transactionsContainer}>
-          <Text style={styles.sectionTitle}>Останні транзакції</Text>
-          {(debts || []).length > 0 ? ( // Додаємо fallback до пустого масиву
-            (debts || []).slice(0, 5).flatMap((debtGroup: any) => 
-              (debtGroup.items || []).slice(0, 2).map((item: any) => (
-                <View key={`${debtGroup.userId}-${item.id}`} style={styles.transactionItem}>
-                  <View style={styles.transactionLeft}>
-                    <Text style={styles.transactionUser}>{debtGroup.userName}</Text>
-                    <Text style={[
-                      styles.transactionDescription,
-                      item.text === 'Оплата боргу' && styles.paymentText
-                    ]}>
-                      {item.text}
-                    </Text>
+          <Text style={[styles.sectionTitle, { color: colors.text, fontSize: 20 * textScale }]}>Останні транзакції</Text>
+          {(() => {
+            if (!debts) return null;
+            const allTransactions = debts.flatMap(debt => 
+              debt.items.map(item => ({
+                ...item,
+                userId: debt.userId,
+                userName: debt.userName,
+                userAvatar: debt.userAvatar,
+              }))
+            ).sort((a: any, b: any) => {
+              const timeA = a.date ? new Date(a.date).getTime() : 0;
+              const timeB = b.date ? new Date(b.date).getTime() : 0;
+              return (isNaN(timeB) ? 0 : timeB) - (isNaN(timeA) ? 0 : timeA);
+            });
+            const recentTransactions = allTransactions.slice(0, 5);
+
+            if (recentTransactions.length === 0) {
+              return <Text style={[styles.noDataText, { color: colors.textSecondary }]}>Немає активних боргів</Text>;
+            }
+
+            return recentTransactions.map((item: any) => (
+                <Animated.View 
+                  key={`${item.userId}-${item.id}`} 
+                  entering={FadeInUp}
+                  layout={LinearTransition.springify()}
+                  style={[styles.transactionItem, { backgroundColor: colors.card, shadowColor: colors.shadow }]}
+                >
+                  <View style={[styles.transactionLeft, { flexDirection: 'row', alignItems: 'center' }]}>
+                    {item.userAvatar ? (
+                      <Image source={{ uri: item.userAvatar }} style={{ width: 40, height: 40, borderRadius: 20, marginRight: 12 }} />
+                    ) : (
+                      <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: colors.border, justifyContent: 'center', alignItems: 'center', marginRight: 12 }}>
+                        <Text style={{ fontSize: 18, color: colors.textSecondary, fontFamily: 'MontserratBold' }}>
+                          {item.userName ? item.userName.charAt(0).toUpperCase() : '?'}
+                        </Text>
+                      </View>
+                    )}
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.transactionUser, { color: colors.text, fontSize: 16 * textScale }]}>{item.userName}</Text>
+                      <Text style={[
+                        styles.transactionDescription,
+                        { color: colors.textSecondary, fontSize: 14 * textScale },
+                        item.isPayment && { color: colors.textSecondary }
+                      ]}>
+                        {item.text}
+                      </Text>
+                    </View>
                   </View>
                   <View style={styles.transactionRight}>
                     <Text style={[
                       styles.transactionAmount,
-                      item.text === 'Оплата боргу' 
-                        ? styles.paymentAmount
-                        : item.fromUserId === user?.id ? styles.negativeText : styles.positiveText
+                      item.isPayment 
+                        ? { color: colors.textSecondary, fontSize: 16 * textScale }
+                        : { color: item.fromUserId === user?.id ? colors.negativeText : colors.positiveText, fontSize: 16 * textScale }
                     ]}>
-                      {item.text === 'Оплата боргу'
-                        ? `${Math.abs(item.amount)} грн`
-                        : `${item.fromUserId === user?.id ? '-' : '+'}${Math.abs(item.amount)} грн`
+                      {item.isPayment
+                        ? `${Math.abs(item.amount)} ${currencySymbol}`
+                        : `${item.fromUserId === user?.id ? '-' : '+'}${Math.abs(item.amount)} ${currencySymbol}`
                       }
                     </Text>
-                    <Text style={styles.transactionDate}>
+                    <Text style={[styles.transactionDate, { color: colors.textSecondary, fontSize: 12 * textScale }]}>
                       {new Date(item.date || Date.now()).toLocaleDateString('uk-UA')}
                     </Text>
                   </View>
-                </View>
-              ))
-            ).slice(0, 5)
-          ) : (
-            <Text style={styles.noDataText}>Немає активних боргів</Text>
-          )}
+                </Animated.View>
+            ));
+          })()}
         </View>
       </ScrollView>
 
       <ProfileModal 
         visible={isProfileModalVisible}
         onClose={() => setIsProfileModalVisible(false)}
+      />
+
+      <SettingsModal 
+        visible={isSettingsVisible}
+        onClose={() => setIsSettingsVisible(false)}
       />
     </View>
   );
@@ -184,9 +238,15 @@ const styles = StyleSheet.create({
     position: 'absolute',
     alignSelf: 'center',
   },
+  headerLeft: {
+    position: 'absolute',
+    left: 16,
+    justifyContent: 'center',
+  },
   headerRight: {
     position: 'absolute',
     right: 16,
+    justifyContent: 'center',
   },
   content: {
     flex: 1,
@@ -268,6 +328,7 @@ const styles = StyleSheet.create({
   },
   statisticItem: {
     alignItems: 'center',
+    justifyContent: 'center',
     flex: 1,
     paddingVertical: 8,
     paddingHorizontal: 4, // Додано горизонтальний падінг
@@ -286,14 +347,12 @@ const styles = StyleSheet.create({
     fontFamily: 'MontserratBold',
     marginBottom: 4,
     textAlign: 'center', // Центрування тексту
-    flexWrap: 'wrap', // Дозволяємо перенос тексту
   },
   statisticLabel: {
     fontSize: 12,
     color: '#666',
     fontFamily: 'Montserrat',
     textAlign: 'center', // Центрування тексту
-    flexWrap: 'wrap', // Дозволяємо перенос тексту
   },
   transactionsContainer: {
     marginBottom: 20,

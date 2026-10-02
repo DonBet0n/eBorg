@@ -1,26 +1,54 @@
-/**
- * Below are the colors that are used in the app. The colors are defined in the light and dark mode.
- * There are many other ways to style your app. For example, [Nativewind](https://www.nativewind.dev/), [Tamagui](https://tamagui.dev/), [unistyles](https://reactnativeunistyles.vercel.app), etc.
- */
-
-const tintColorLight = '#0a7ea4';
-const tintColorDark = '#fff';
-
 export const Colors = {
   light: {
-    text: '#11181C',
     background: '#fff',
-    tint: tintColorLight,
-    icon: '#687076',
+    text: '#000',
+    textSecondary: '#666',
+    border: '#E0E0E0',
+    card: '#fff',
+    cardAlt: '#F5F5F5',
+    icon: 'black',
+    iconSecondary: 'grey',
+    positiveBg: '#E8F5E9',
+    negativeBg: '#FFEBEE',
+    neutralBg: '#F5F5F5',
+    positiveText: '#2E7D32',
+    negativeText: '#C62828',
+    neutralText: '#757575',
+    inputBg: '#F5F5F5',
     tabIconDefault: '#687076',
-    tabIconSelected: tintColorLight,
+    tabIconSelected: '#0a7ea4',
+    buttonBg: '#000',
+    buttonText: '#fff',
+    shadow: '#000',
+    warningBg: '#FFF3E0',
+    warningText: '#E65100',
+    warningBorder: '#FFB74D',
   },
   dark: {
-    text: '#ECEDEE',
-    background: '#151718',
-    tint: tintColorDark,
-    icon: '#9BA1A6',
+    background: '#121212',
+    text: '#E0E0E0',
+    textSecondary: '#A0A0A0',
+    border: '#333333',
+    card: '#1E1E1E',
+    cardAlt: '#2A2A2A',
+    icon: '#E0E0E0',
+    iconSecondary: '#A0A0A0',
+    positiveBg: 'rgba(46, 125, 50, 0.2)', // приглушений зелений
+    negativeBg: 'rgba(198, 40, 40, 0.2)', // приглушений червоний
+    neutralBg: '#2A2A2A',
+    positiveText: '#81C784',
+    negativeText: '#E57373',
+    neutralText: '#9E9E9E',
+    inputBg: '#2A2A2A',
     tabIconDefault: '#9BA1A6',
-    tabIconSelected: tintColorDark,
+    tabIconSelected: '#fff',
+    buttonBg: '#333333',
+    buttonText: '#FFFFFF',
+    shadow: '#000',
+    warningBg: 'rgba(230, 81, 0, 0.2)',
+    warningText: '#FFB74D',
+    warningBorder: '#F57C00',
   },
 };
+
+export type ThemeColors = typeof Colors.light;

@@ -17,8 +17,7 @@ const detailsStyles = StyleSheet.create({
     borderRadius: 8,
     padding: 20,
     width: '95%',
-    maxHeight: '90%',
-    marginTop: '-15%',
+    maxHeight: '80%',
   },
   modalTitleContainer: {
     flexDirection: 'row',
@@ -124,7 +123,7 @@ const detailsStyles = StyleSheet.create({
     marginBottom: 8,
     borderWidth: 1,
     borderColor: '#E0E0E0',
-    
+    overflow: 'hidden',
   },
   modalGroupHeader: {
     flexDirection: 'row',

@@ -1,15 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, TextInput, TouchableOpacity, KeyboardAvoidingView, Platform, Alert, Vibration } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { StatusBar } from 'expo-status-bar';
 import { router } from 'expo-router';
 import authStyles from '../styles/AuthStyles';
 import { useFirebase } from '../contexts/FirebaseContext';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
-import { doc, setDoc } from 'firebase/firestore';
+import { useAppTheme } from '../contexts/ThemeContext';
 
 const AuthScreen = () => {
   const { auth, db, setUser, getCurrentUser } = useFirebase();
+  const { colors, theme } = useAppTheme();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [username, setUsername] = useState('');
@@ -19,8 +19,7 @@ const AuthScreen = () => {
   useEffect(() => {
     const checkSession = async () => {
       try {
-        // 1. Якщо є активний користувач у Firebase - підтягуємо з Firestore
-        if (auth.currentUser) {
+        if (auth().currentUser) {
           const user = await getCurrentUser();
           if (user) {
             setUser(user);
@@ -28,15 +27,9 @@ const AuthScreen = () => {
             return;
           }
         }
-        // 2. Якщо є кешований користувач - піднімаємо з кешу
-        const cachedUser = await AsyncStorage.getItem('cachedUser');
-        if (cachedUser) {
-          setUser(JSON.parse(cachedUser));
-          router.replace('/(tabs)/HomeScreen');
-          return;
-        }
+
       } catch (error) {
-        console.log('No active session');
+        // No active session
       } finally {
         setIsLoading(false);
       }
@@ -66,7 +59,7 @@ const AuthScreen = () => {
 
   const handleLogin = async () => {
     try {
-      await signInWithEmailAndPassword(auth, email, password);
+      await auth().signInWithEmailAndPassword(email, password);
       const user = await getCurrentUser();
       if (user) {
         router.replace('/(tabs)/HomeScreen');
@@ -80,11 +73,12 @@ const AuthScreen = () => {
 
   const handleRegister = async () => {
     try {
-      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      const userCredential = await auth().createUserWithEmailAndPassword(email, password);
       const userId = userCredential.user.uid;
-      await setDoc(doc(db, 'users', userId), {
+      await db().collection('users').doc(userId).set({
         name: username,
         email: email,
+        updatedAt: db.FieldValue.serverTimestamp(),
       });
       await handleLogin();
     } catch (error) {
@@ -105,64 +99,59 @@ const AuthScreen = () => {
   };
 
   if (isLoading) {
-    return <View style={{flex: 1, backgroundColor: '#fff'}} />
+    return <View style={{flex: 1, backgroundColor: colors.background}} />
   }
 
   return (
-    <SafeAreaView style={authStyles.container}>
+    <SafeAreaView style={[authStyles.container, { backgroundColor: colors.background }]}>
+      <StatusBar style={theme === 'dark' ? 'light' : 'dark'} backgroundColor={colors.background} />
       <KeyboardAvoidingView 
         behavior={Platform.OS === "ios" ? "padding" : "height"}
         style={authStyles.content}
       >
         <View style={authStyles.logoContainer}>
-          <Text style={authStyles.logo}>eBorg</Text>
-          <Text style={authStyles.subtitle}>Manage your debts easily</Text>
+          <Text style={[authStyles.logo, { color: colors.text }]}>eBorg</Text>
+          <Text style={[authStyles.subtitle, { color: colors.textSecondary }]}>Manage your debts easily</Text>
         </View>
 
         <View style={authStyles.formContainer}>
           {!isLogin && (
             <TextInput
-              style={authStyles.input}
+              style={[authStyles.input, { backgroundColor: colors.inputBg, borderColor: colors.border, color: colors.text }]}
               placeholder="Username"
               value={username}
               onChangeText={setUsername}
               autoCapitalize="none"
-              placeholderTextColor="#666"
+              placeholderTextColor={colors.textSecondary}
             />
           )}
           
           <TextInput
-            style={authStyles.input}
+            style={[authStyles.input, { backgroundColor: colors.inputBg, borderColor: colors.border, color: colors.text }]}
             placeholder="Email"
             value={email}
             onChangeText={setEmail}
             keyboardType="email-address"
             autoCapitalize="none"
-            placeholderTextColor="#666"
+            placeholderTextColor={colors.textSecondary}
           />
           
           <TextInput
-            style={authStyles.input}
+            style={[authStyles.input, { backgroundColor: colors.inputBg, borderColor: colors.border, color: colors.text }]}
             placeholder="Password"
             value={password}
             onChangeText={setPassword}
             secureTextEntry
-            placeholderTextColor="#666"
+            placeholderTextColor={colors.textSecondary}
           />
 
           <TouchableOpacity 
-            style={authStyles.button}
+            style={[authStyles.button, { backgroundColor: colors.buttonBg }]}
             onPress={handleSubmit}
           >
-            <Text style={authStyles.buttonText}>
+            <Text style={[authStyles.buttonText, { color: colors.buttonText }]}>
               {isLogin ? 'Log In' : 'Sign Up'}
             </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity 
-            style={authStyles.button}
-            onPress={() => router.replace('/(tabs)/HomeScreen')}>
-            <Text style={authStyles.buttonText}>Skip</Text>
           </TouchableOpacity>
 
           <TouchableOpacity 
@@ -170,12 +159,12 @@ const AuthScreen = () => {
             onPress={() => setIsLogin(!isLogin)}
           >
             {isLogin ? (
-              <Text style={authStyles.switchButtonText}>
-                Don't have an account? <Text style={authStyles.switchButtonTextHighlight}>Sign Up</Text>
+              <Text style={[authStyles.switchButtonText, { color: colors.textSecondary }]}>
+                Don't have an account? <Text style={[authStyles.switchButtonTextHighlight, { color: colors.text }]}>Sign Up</Text>
               </Text>
             ) : (
-              <Text style={authStyles.switchButtonText}>
-                Already have an account? <Text style={authStyles.switchButtonTextHighlight}>Log In</Text>
+              <Text style={[authStyles.switchButtonText, { color: colors.textSecondary }]}>
+                Already have an account? <Text style={[authStyles.switchButtonTextHighlight, { color: colors.text }]}>Log In</Text>
               </Text>
             )}
           </TouchableOpacity>

@@ -1,0 +1,48 @@
+# EAS використовує цей файл ЗАМІСТЬ .gitignore при завантаженні проекту на збірку.
+# Файл має бути в UTF-8 (не UTF-16 з PowerShell), інакше EAS не розпізнає правила.
+
+# dependencies
+node_modules/
+
+# Expo
+.expo/
+dist/
+web-build/
+expo-env.d.ts
+
+# Native: папки генеруються з app.json через prebuild на сервері EAS
+/android
+/ios
+
+# Native secrets
+*.orig.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.pem
+
+# Metro
+.metro-health-check*
+
+# debug
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# macOS
+.DS_Store
+
+# local env files
+.env*.local
+
+# typescript
+*.tsbuildinfo
+
+app-example
+
+# Firebase: ключ адміна НІКОЛИ не має потрапляти у збірку.
+# contexts/google-services.json тут навмисно НЕ ігнорується — він потрібен для збірки (app.json -> googleServicesFile).
+*firebase-adminsdk*.json
+contexts/firebaseConfig.ts

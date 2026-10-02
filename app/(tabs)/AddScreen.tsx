@@ -2,56 +2,63 @@ import React, { useState, useEffect } from 'react';
 import { View, TouchableOpacity, Text, StyleSheet } from 'react-native';
 import SoloTab from '../../components/AddScreen/Solo';
 import MultyTab from '../../components/AddScreen/Multy';
-import { User } from '../../types/debt';
 import { useFirebase } from '../../contexts/FirebaseContext';
-import { getDocs, collection } from 'firebase/firestore';
+import { useAppTheme } from '../../contexts/ThemeContext';
+
+import { useNavigation } from 'expo-router';
 
 const AddScreen: React.FC = () => {
     const [selectedTab, setSelectedTab] = useState<'solo' | 'multy'>('solo');
-    const [users, setUsers] = useState<User[]>([]);
-    const { db } = useFirebase();
+    // Список користувачів береться з локального кешу, який синхронізує FirebaseContext
+    const { users } = useFirebase();
+    const { colors } = useAppTheme();
+    const navigation = useNavigation();
+    const [soloHasData, setSoloHasData] = useState(false);
+    const [multyHasData, setMultyHasData] = useState(false);
 
     useEffect(() => {
-        const fetchUsers = async () => {
-            try {
-                const response = await getDocs(collection(db, 'users'));
-                const fetchedUsers: User[] = response.docs.map(docSnap => {
-                    const data = docSnap.data();
-                    return {
-                        id: docSnap.id,
-                        name: data.name || '',
-                        email: data.email || '',
-                        secondName: data.secondName || '',
-                        avatar: data.avatar || ''
-                    };
-                });
-                setUsers(fetchedUsers);
-            } catch (error) {
-                console.error('Error fetching users:', error);
-            }
-        };
-        fetchUsers();
-    }, [db]);
+        navigation.setOptions({ swipeEnabled: !(soloHasData || multyHasData) });
+    }, [soloHasData, multyHasData, navigation]);
 
     return (
-        <View style={styles.container}>
-            <View style={styles.tabBar}>
+        <View style={[styles.container, { backgroundColor: colors.background }]}>
+            <View style={[styles.tabBar, { backgroundColor: colors.background, borderColor: colors.border }]}>
                 <TouchableOpacity
-                    style={[styles.tabButton, selectedTab === 'solo' && styles.activeTabButton]}
+                    style={[
+                        styles.tabButton, 
+                        { backgroundColor: colors.card },
+                        selectedTab === 'solo' && { backgroundColor: colors.buttonBg }
+                    ]}
                     onPress={() => setSelectedTab('solo')}
                 >
-                    <Text style={[styles.tabButtonText, selectedTab === 'solo' && styles.activeTabButtonText]}>Solo</Text>
+                    <Text style={[
+                        styles.tabButtonText, 
+                        { color: colors.textSecondary },
+                        selectedTab === 'solo' && { color: colors.buttonText }
+                    ]}>Solo</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                    style={[styles.tabButton, selectedTab === 'multy' && styles.activeTabButton]}
+                    style={[
+                        styles.tabButton, 
+                        { backgroundColor: colors.card },
+                        selectedTab === 'multy' && { backgroundColor: colors.buttonBg }
+                    ]}
                     onPress={() => setSelectedTab('multy')}
                 >
-                    <Text style={[styles.tabButtonText, selectedTab === 'multy' && styles.activeTabButtonText]}>Multy</Text>
+                    <Text style={[
+                        styles.tabButtonText, 
+                        { color: colors.textSecondary },
+                        selectedTab === 'multy' && { color: colors.buttonText }
+                    ]}>Multy</Text>
                 </TouchableOpacity>
             </View>
 
-            {selectedTab === 'solo' && <SoloTab userList={users} />}
-            {selectedTab === 'multy' && <MultyTab userList={users} />}
+            <View style={{ flex: 1, display: selectedTab === 'solo' ? 'flex' : 'none', marginTop: 10 }}>
+                <SoloTab userList={users} onHasDataChange={setSoloHasData} />
+            </View>
+            <View style={{ flex: 1, display: selectedTab === 'multy' ? 'flex' : 'none', marginTop: 10 }}>
+                <MultyTab userList={users} onHasDataChange={setMultyHasData} />
+            </View>
         </View>
     );
 };
@@ -73,7 +80,7 @@ const styles = StyleSheet.create({
     },
     tabButton: {
         flex: 1,
-        paddingVertical: 15,
+        paddingVertical: 8,
         alignItems: 'center',
         backgroundColor: '#fff',
     },
@@ -81,7 +88,7 @@ const styles = StyleSheet.create({
         backgroundColor: '#000',
     },
     tabButtonText: {
-        fontSize: 16,
+        fontSize: 14,
         color: '#666',
         fontFamily: 'Montserrat',
     },

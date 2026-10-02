@@ -3,10 +3,13 @@ import { View, Text, Modal, StyleSheet, TouchableOpacity, TextInput, Alert, Imag
 import { MaterialIcons } from '@expo/vector-icons';
 import { useFirebase } from '../../contexts/FirebaseContext';
 import * as ImagePicker from 'expo-image-picker';
+import * as ImageManipulator from 'expo-image-manipulator';
 import { router } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { updateDoc, doc } from 'firebase/firestore';
-import { signOut } from 'firebase/auth';
+
+import { useAppTheme } from '../../contexts/ThemeContext';
+
+const AVATAR_SIZE = 256;
 
 interface ProfileModalProps {
     visible: boolean;
@@ -15,6 +18,7 @@ interface ProfileModalProps {
 
 const ProfileModal: React.FC<ProfileModalProps> = ({ visible, onClose }) => {
     const { user, db, getCurrentUser, setUser, auth } = useFirebase();
+    const { colors } = useAppTheme();
     const [name, setName] = useState('');
     const [secondName, setSecondName] = useState('');
     const [isLoading, setIsLoading] = useState(false);
@@ -32,13 +36,42 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ visible, onClose }) => {
         }
     }, [user]);
 
+    const pickImage = async () => {
+        try {
+            const result = await ImagePicker.launchImageLibraryAsync({
+                mediaTypes: ImagePicker.MediaTypeOptions.Images,
+                allowsEditing: true,
+                aspect: [1, 1],
+                quality: 1,
+            });
+
+            if (!result.canceled && result.assets && result.assets.length > 0) {
+                // Аватар зберігається base64 прямо в документі користувача і синхронізується на всі пристрої,
+                // тому зменшуємо його до маленького JPEG (~15–25 КБ замість сотень КБ)
+                const resized = await ImageManipulator.manipulateAsync(
+                    result.assets[0].uri,
+                    [{ resize: { width: AVATAR_SIZE, height: AVATAR_SIZE } }],
+                    { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG, base64: true }
+                );
+                if (resized.base64) {
+                    setAvatarUri(`data:image/jpeg;base64,${resized.base64}`);
+                }
+            }
+        } catch (error) {
+            console.error('Error picking image:', error);
+            Alert.alert('Помилка', 'Не вдалося завантажити зображення');
+        }
+    };
+
     const handleSave = async () => {
         if (!user || !name.trim()) return;
         setIsLoading(true);
         try {
-            await updateDoc(doc(db, 'users', user.id), {
+            await db().collection('users').doc(user.id).update({
                 name: name.trim(),
                 secondName: secondName.trim(),
+                ...(avatarUri ? { avatar: avatarUri } : {}),
+                updatedAt: db.FieldValue.serverTimestamp(),
             });
             await getCurrentUser();
             onClose();
@@ -52,7 +85,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ visible, onClose }) => {
 
     const handleLogout = async () => {
         try {
-            await signOut(auth);
+            await auth().signOut();
             await AsyncStorage.clear();
             setUser(null);
             onClose();
@@ -65,29 +98,30 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ visible, onClose }) => {
 
     return (
         <Modal
-            visible={visible}
-            animationType="slide"
+            animationType="fade"
             transparent={true}
+            statusBarTranslucent={true}
+            visible={visible}
             onRequestClose={onClose}
         >
             <View style={styles.modalOverlay}>
-                <View style={styles.modalContent}>
+                <View style={[styles.modalContent, { backgroundColor: colors.background }]}>
                     <View style={styles.header}>
-                        <Text style={styles.headerTitle}>Профіль</Text>
+                        <Text style={[styles.headerTitle, { color: colors.text }]}>Профіль</Text>
                         <TouchableOpacity onPress={onClose} style={styles.closeButton}>
-                            <MaterialIcons name="close" size={24} color="black" />
+                            <MaterialIcons name="close" size={24} color={colors.icon} />
                         </TouchableOpacity>
                     </View>
 
                     <View style={styles.avatarSection}>
-                        <TouchableOpacity style={styles.avatarContainer}>
+                        <TouchableOpacity style={styles.avatarContainer} onPress={pickImage}>
                             {avatarUri ? (
                                 <Image 
                                     source={{ uri: avatarUri }} 
                                     style={styles.avatarImage} 
                                 />
                             ) : (
-                                <MaterialIcons name="account-circle" size={80} color="black" />
+                                <MaterialIcons name="account-circle" size={80} color={colors.icon} />
                             )}
                             <View style={styles.editIconContainer}>
                                 <MaterialIcons name="edit" size={20} color="white" />
@@ -96,40 +130,40 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ visible, onClose }) => {
                     </View>
 
                     <View style={styles.inputSection}>
-                        <Text style={styles.inputLabel}>Ім'я</Text>
+                        <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>Ім'я</Text>
                         <TextInput 
-                            style={styles.input}
+                            style={[styles.input, { backgroundColor: colors.inputBg, borderColor: colors.border, color: colors.text }]}
                             placeholder="Введіть ваше ім'я"
-                            placeholderTextColor="#666"
+                            placeholderTextColor={colors.textSecondary}
                             value={name}
                             onChangeText={setName}
                         />
 
-                        <Text style={styles.inputLabel}>Прізвище</Text>
+                        <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>Прізвище</Text>
                         <TextInput 
-                            style={styles.input}
+                            style={[styles.input, { backgroundColor: colors.inputBg, borderColor: colors.border, color: colors.text }]}
                             placeholder="Введіть ваше прізвище"
-                            placeholderTextColor="#666"
+                            placeholderTextColor={colors.textSecondary}
                             value={secondName}
                             onChangeText={setSecondName}
                         />
                     </View>
 
                     <TouchableOpacity 
-                        style={[styles.saveButton, isLoading && styles.saveButtonDisabled]}
+                        style={[styles.saveButton, { backgroundColor: colors.buttonBg }, isLoading && styles.saveButtonDisabled]}
                         onPress={handleSave}
                         disabled={isLoading}
                     >
-                        <Text style={styles.saveButtonText}>
+                        <Text style={[styles.saveButtonText, { color: colors.buttonText }]}>
                             {isLoading ? 'Збереження...' : 'Зберегти зміни'}
                         </Text>
                     </TouchableOpacity>
 
                     <TouchableOpacity 
-                        style={styles.logoutButton}
+                        style={[styles.logoutButton, { backgroundColor: colors.background, borderColor: colors.negativeBg }]}
                         onPress={handleLogout}
                     >
-                        <Text style={styles.logoutButtonText}>Вийти з акаунту</Text>
+                        <Text style={[styles.logoutButtonText, { color: colors.negativeText }]}>Вийти з акаунту</Text>
                     </TouchableOpacity>
                 </View>
             </View>

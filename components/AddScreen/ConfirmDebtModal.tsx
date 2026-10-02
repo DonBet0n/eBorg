@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, Text, Modal, StyleSheet, TouchableOpacity } from 'react-native';
 import { formatAmount } from '../../utils/debtCalculations';
+import { useAppTheme } from '../../contexts/ThemeContext';
 
 interface ConfirmDebtModalProps {
   visible: boolean;
@@ -22,57 +23,61 @@ const ConfirmDebtModal: React.FC<ConfirmDebtModalProps> = ({
   debtInfo,
   isSuccess
 }) => {
+  const { colors, currencySymbol } = useAppTheme();
+
   if (!debtInfo) return null;
 
   return (
     <Modal
       visible={visible}
-      transparent={true}
       animationType="fade"
+      transparent={true}
+      statusBarTranslucent={true}
+      onRequestClose={onClose}
     >
       <View style={styles.modalOverlay}>
-        <View style={styles.modalContent}>
+        <View style={[styles.modalContent, { backgroundColor: colors.background }]}>
           {isSuccess ? (
             <>
-              <Text style={styles.title}>Борг створено!</Text>
+              <Text style={[styles.title, { color: colors.text }]}>Борг створено!</Text>
               <View style={styles.infoContainer}>
-                <Text style={styles.infoText}>
-                  Борг від <Text style={styles.boldText}>{debtInfo.fromUser}</Text> до{' '}
-                  <Text style={styles.boldText}>{debtInfo.toUser}</Text>
+                <Text style={[styles.infoText, { color: colors.textSecondary }]}>
+                  Борг від <Text style={[styles.boldText, { color: colors.text }]}>{debtInfo.fromUser}</Text> до{' '}
+                  <Text style={[styles.boldText, { color: colors.text }]}>{debtInfo.toUser}</Text>
                 </Text>
-                <Text style={styles.amountText}>
-                  Сума: {formatAmount(debtInfo.totalAmount)} грн
+                <Text style={[styles.amountText, { color: colors.text }]}>
+                  Сума: {formatAmount(debtInfo.totalAmount)} {currencySymbol}
                 </Text>
               </View>
               <View style={styles.buttonContainer}>
-                <TouchableOpacity style={[styles.button]} onPress={onClose}>
-                  <Text style={styles.buttonText}>Закрити</Text>
+                <TouchableOpacity style={[styles.button, { backgroundColor: colors.buttonBg }]} onPress={onClose}>
+                  <Text style={[styles.buttonText, { color: colors.buttonText }]}>Закрити</Text>
                 </TouchableOpacity>
               </View>
             </>
           ) : (
             <>
-              <Text style={styles.title}>Підтвердження створення боргу</Text>
+              <Text style={[styles.title, { color: colors.text }]}>Підтвердження створення боргу</Text>
               <View style={styles.infoContainer}>
-                <Text style={styles.infoText}>
-                  Від: <Text style={styles.boldText}>{debtInfo.fromUser}</Text>
+                <Text style={[styles.infoText, { color: colors.textSecondary }]}>
+                  Від: <Text style={[styles.boldText, { color: colors.text }]}>{debtInfo.fromUser}</Text>
                 </Text>
-                <Text style={styles.infoText}>
-                  Кому: <Text style={styles.boldText}>{debtInfo.toUser}</Text>
+                <Text style={[styles.infoText, { color: colors.textSecondary }]}>
+                  Кому: <Text style={[styles.boldText, { color: colors.text }]}>{debtInfo.toUser}</Text>
                 </Text>
-                <Text style={styles.infoText}>
+                <Text style={[styles.infoText, { color: colors.textSecondary }]}>
                   Кількість елементів: {debtInfo.itemsCount}
                 </Text>
-                <Text style={styles.amountText}>
-                  Загальна сума: {formatAmount(debtInfo.totalAmount)} грн
+                <Text style={[styles.amountText, { color: colors.text }]}>
+                  Загальна сума: {formatAmount(debtInfo.totalAmount)} {currencySymbol}
                 </Text>
               </View>
               <View style={styles.buttonContainer}>
                 <TouchableOpacity style={[styles.button, styles.cancelButton]} onPress={onClose}>
-                  <Text style={styles.buttonText}>Скасувати</Text>
+                  <Text style={[styles.buttonText, { color: 'white' }]}>Скасувати</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.button} onPress={onConfirm}>
-                  <Text style={styles.buttonText}>Підтвердити</Text>
+                <TouchableOpacity style={[styles.button, { backgroundColor: colors.buttonBg }]} onPress={onConfirm}>
+                  <Text style={[styles.buttonText, { color: colors.buttonText }]}>Підтвердити</Text>
                 </TouchableOpacity>
               </View>
             </>

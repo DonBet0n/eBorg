@@ -1,28 +1,46 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
-import { StyleSheet, Text, View, TouchableOpacity, FlatList, TextInput, Modal, Vibration, Animated } from 'react-native';
+import { StyleSheet, Text, View, TouchableOpacity, Vibration } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import DebtItemComponent from '../DebtItem';
-import { User, DebtItem, Debt } from '../../types/debt';
+import { User, DebtItem } from '../../types/debt';
 import { useFirebase } from '../../contexts/FirebaseContext';
-import { addDoc, collection } from 'firebase/firestore';
+
+import Animated, { LinearTransition } from 'react-native-reanimated';
 import ConfirmDebtModal from './ConfirmDebtModal';
+import UserSelectionModal from './UserSelectionModal';
+import ErrorToast from '../ui/ErrorToast';
+import AddScreenStyles from '../../styles/AddScreenStyles';
+import { useAppTheme } from '../../contexts/ThemeContext';
+import QRScannerModal from '../QRScannerModal';
 
 interface SoloTabProps {
     userList: User[];
+    onHasDataChange?: (hasData: boolean) => void;
 }
 
-const SoloTab: React.FC<SoloTabProps> = ({ userList }) => {
-    const { db } = useFirebase();
+const SoloTab: React.FC<SoloTabProps> = ({ userList, onHasDataChange }) => {
+    const { createDebts, notifyUser } = useFirebase();
+    const { colors, textScale, currencySymbol } = useAppTheme();
     const [isUserListModalVisible, setUserListModalVisible] = useState(false);
     const [debtItemsSolo, setDebtItemsSolo] = useState<DebtItem[]>([{ id: '1', text: '', num: '0' }]);
     const [selectedUserSolo1, setSelectedUserSolo1] = useState<User | null>(null);
     const [selectedUserSolo2, setSelectedUserSolo2] = useState<User | null>(null);
     const [currentUserSelectorSolo, setCurrentUserSelectorSolo] = useState<'user1' | 'user2' | null>(null);
+    const [isScannerVisible, setIsScannerVisible] = useState(false);
+    
+    useEffect(() => {
+        const hasData = selectedUserSolo1 !== null || 
+                        selectedUserSolo2 !== null || 
+                        debtItemsSolo.length > 1 || 
+                        (debtItemsSolo[0] && (debtItemsSolo[0].text.trim() !== '' || debtItemsSolo[0].num !== '0'));
+        onHasDataChange?.(hasData);
+    }, [selectedUserSolo1, selectedUserSolo2, debtItemsSolo, onHasDataChange]);
+
     const lastItemRef = useRef<{ focusDescription: () => void }>(null);
     const [confirmModalVisible, setConfirmModalVisible] = useState(false);
     const [isSuccess, setIsSuccess] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const fadeAnim = useRef(new Animated.Value(0)).current;
+    const [isViewMode, setIsViewMode] = useState(false);
 
     // --- Функції Modal User List ---
     const openUserListModal = useCallback(() => {
@@ -92,19 +110,6 @@ const SoloTab: React.FC<SoloTabProps> = ({ userList }) => {
 
     const showError = (message: string) => {
         setError(message);
-        Animated.sequence([
-            Animated.timing(fadeAnim, {
-                toValue: 1,
-                duration: 300,
-                useNativeDriver: true,
-            }),
-            Animated.delay(3000),
-            Animated.timing(fadeAnim, {
-                toValue: 0,
-                duration: 300,
-                useNativeDriver: true,
-            })
-        ]).start(() => setError(null));
     };
 
     const validateDebtItems = () => {
@@ -139,24 +144,25 @@ const SoloTab: React.FC<SoloTabProps> = ({ userList }) => {
         try {
             const deptId = Date.now().toString();
 
-            const debtPromises = debtItemsSolo
+            await createDebts(debtItemsSolo
                 .filter(item => item.num)
-                .map(item => {
-                    const debt = {
-                        deptId: deptId,
-                        fromUserId: selectedUserSolo1?.id || '',  // Add null check
-                        toUserId: selectedUserSolo2?.id || '',    // Add null check
-                        text: item.text?.trim() || 'Без опису',
-                        amount: Number(Number(item.num).toFixed(2)),
-                        createdAt: new Date(),
-                    };
-
-                    return addDoc(collection(db, 'debts'), debt);
-                });
-
-            await Promise.all(debtPromises);
-            console.log('Створено борги з group ID:', deptId);
+                .map(item => ({
+                    deptId: deptId,
+                    fromUserId: selectedUserSolo1.id,
+                    toUserId: selectedUserSolo2.id,
+                    text: item.text?.trim() || 'Без опису',
+                    amount: Number(Number(item.num).toFixed(2)),
+                })));
             
+            // Push-сповіщення кожному учаснику, крім того, хто створює борг (notifyUser сам пропускає себе)
+            const debtor = selectedUserSolo1;
+            const creditor = selectedUserSolo2;
+            const totalAmount = Number(debtItemsSolo
+                .reduce((sum, item) => sum + (parseFloat(item.num) || 0), 0)
+                .toFixed(2));
+            notifyUser(debtor.id, 'eBorg', `Ви винні ${creditor.name} ${totalAmount} грн.`);
+            notifyUser(creditor.id, 'eBorg', `Вам винен ${debtor.name} ${totalAmount} грн.`);
+
             setIsSuccess(true);
             // Reset form after delay
             setTimeout(() => {
@@ -178,14 +184,14 @@ const SoloTab: React.FC<SoloTabProps> = ({ userList }) => {
             {/* Person Selector for Solo */}
             <View style={styles.personSelectorContainer}>
                 <TouchableOpacity
-                    style={styles.multyUserSelectorContainerSolo}
+                    style={AddScreenStyles.userSelectorContainer}
                     onPress={() => openUserListModalSolo('user1')}
                 >
-                    <View style={styles.multyUserButton}>
+                    <View style={[AddScreenStyles.userButton, { backgroundColor: colors.inputBg, borderColor: colors.border }]}>
                         {selectedUserSolo1 ? (
-                            <Text style={styles.selectedUserName}>{selectedUserSolo1.name}</Text>
+                            <Text style={[AddScreenStyles.selectedUserName, { color: colors.text, fontSize: 16 * textScale }]}>{selectedUserSolo1.name}</Text>
                         ) : (
-                            <MaterialIcons name="add" size={24} color="grey" />
+                            <MaterialIcons name="add" size={24} color={colors.iconSecondary} />
                         )}
                     </View>
                 </TouchableOpacity>
@@ -193,66 +199,39 @@ const SoloTab: React.FC<SoloTabProps> = ({ userList }) => {
                 <MaterialIcons
                     name={"arrow-forward"}
                     size={30}
-                    color="black"
+                    color={colors.icon}
                 />
 
                 <TouchableOpacity
-                    style={styles.multyUserSelectorContainerSolo}
+                    style={AddScreenStyles.userSelectorContainer}
                     onPress={() => openUserListModalSolo('user2')}
                 >
-                    <View style={styles.multyUserButton}>
+                    <View style={[AddScreenStyles.userButton, { backgroundColor: colors.inputBg, borderColor: colors.border }]}>
                         {selectedUserSolo2 ? (
-                            <Text style={styles.selectedUserName}>{selectedUserSolo2.name}</Text>
+                            <Text style={[AddScreenStyles.selectedUserName, { color: colors.text, fontSize: 16 * textScale }]}>{selectedUserSolo2.name}</Text>
                         ) : (
-                            <MaterialIcons name="add" size={24} color="grey" />
+                            <MaterialIcons name="add" size={24} color={colors.iconSecondary} />
                         )}
                     </View>
                 </TouchableOpacity>
             </View>
 
-
-            {/* User List Modal with Radio buttons for Solo */}
-            <Modal
+            <UserSelectionModal
                 visible={isUserListModalVisible}
-                animationType="slide"
-                transparent={true}
-            >
-                <View style={styles.modalOverlay}>
-                    <View style={styles.modalContent}>
-                        <FlatList
-                            data={userList}
-                            keyExtractor={(item) => item.id}
-                            renderItem={({ item }) => (
-                                <TouchableOpacity onPress={() => handleUserSelectionChangeSolo(item)}>
-                                    <View style={styles.modalUserItem}>
-                                        <View style={styles.modalUserItemRadioArea}>
-                                            <MaterialIcons
-                                                name={(currentUserSelectorSolo === 'user1' && selectedUserSolo1?.id === item.id) 
-                                                    || (currentUserSelectorSolo === 'user2' && selectedUserSolo2?.id === item.id) ? "radio-button-checked" : "radio-button-unchecked"}
-                                                size={24}
-                                                color={((currentUserSelectorSolo === 'user1' && selectedUserSolo1?.id === item.id) 
-                                                    || (currentUserSelectorSolo === 'user2' && selectedUserSolo2?.id === item.id)) ? "blue" : "grey"}
-                                            />
-                                        </View>
-                                        <Text style={styles.modalUserName}>{item.name}</Text>
-                                        <View style={styles.modalUserItemCheckboxArea}>
-                                        </View>
-                                    </View>
-                                </TouchableOpacity>
-                            )}
-                        />
-                        <TouchableOpacity style={styles.modalCloseButton} onPress={closeUserListModal}>
-                            <Text style={styles.modalCloseButtonText}>ОК</Text>
-                        </TouchableOpacity>
-                    </View>
-                </View>
-            </Modal>
+                onClose={closeUserListModal}
+                userList={userList}
+                mode="solo"
+                selectedUserId={currentUserSelectorSolo === 'user1' ? selectedUserSolo1?.id : selectedUserSolo2?.id}
+                onSelectSolo={handleUserSelectionChangeSolo}
+            />
+
 
 
             {/* Debt Items List for Solo */}
-            <FlatList
+            <Animated.FlatList
                 data={debtItemsSolo}
                 keyExtractor={(item) => item.id}
+                itemLayoutAnimation={LinearTransition}
                 renderItem={({ item, index }) => (
                     <DebtItemComponent
                         ref={index === debtItemsSolo.length - 1 ? lastItemRef : null}
@@ -262,29 +241,57 @@ const SoloTab: React.FC<SoloTabProps> = ({ userList }) => {
                         onTextChange={(text) => updateDebtItemSolo(item.id, 'text', text)}
                         onNumChange={(num) => updateDebtItemSolo(item.id, 'num', num)}
                         onDelete={() => deleteDebtItemSolo(item.id)}
-                        isLast={index === debtItemsSolo.length - 1}
+                        isLast={false} // No longer used inside
                         isOnly={debtItemsSolo.length === 1}
-                        onAdd={addDebtItemSolo}
+                        onAdd={() => {}} // No longer used inside
+                        isViewMode={isViewMode}
+                        index={index}
+                        totalCount={debtItemsSolo.length}
                     />
                 )}
+                ListFooterComponent={
+                    !isViewMode ? (
+                        <TouchableOpacity onPress={addDebtItemSolo} style={[styles.addButton, { backgroundColor: colors.inputBg, borderColor: colors.border }]}>
+                            <MaterialIcons name="add" size={24} color={colors.iconSecondary} />
+                        </TouchableOpacity>
+                    ) : null
+                }
                 style={styles.debtItemList}
             />
 
             {/* Total with Create Button for Solo */}
-            <View style={styles.bottomContainer}>
-                <View style={styles.totalContainer}>
-                    <Text style={styles.totalText}>Total</Text>
-                    <View style={styles.totalValueContainer}>
-                        <Text style={styles.totalValue}>{calculateTotalSolo()}</Text>
-                        <Text style={styles.currency}> грн</Text>
+            <View style={[styles.bottomContainer, { borderTopColor: colors.border }]}>
+                <View style={[styles.totalContainer, { borderTopColor: colors.border, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}>
+                    <View style={{ flexDirection: 'row', marginRight: 12 }}>
+                        <TouchableOpacity 
+                            style={{ backgroundColor: colors.buttonBg, alignItems: 'center', justifyContent: 'center', padding: 12, borderRadius: 12, width: 48, height: 48, marginRight: 8 }}
+                            onPress={() => setIsScannerVisible(true)}
+                        >
+                            <MaterialIcons name="qr-code-scanner" size={24} color={colors.buttonText} />
+                        </TouchableOpacity>
+                        
+                        <TouchableOpacity 
+                            style={{ backgroundColor: isViewMode ? colors.buttonBg : colors.inputBg, borderColor: isViewMode ? colors.buttonBg : colors.border, borderWidth: isViewMode ? 0 : 1, alignItems: 'center', justifyContent: 'center', padding: 12, borderRadius: 12, width: 48, height: 48 }}
+                            onPress={() => setIsViewMode(!isViewMode)}
+                        >
+                            <MaterialIcons name={isViewMode ? "visibility-off" : "visibility"} size={24} color={isViewMode ? colors.buttonText : colors.icon} />
+                        </TouchableOpacity>
+                    </View>
+
+                    <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, justifyContent: 'space-between' }}>
+                        <Text style={[styles.totalText, { color: colors.text, fontSize: 18 * textScale }]}>Total</Text>
+                        <View style={styles.totalValueContainer}>
+                            <Text style={[styles.totalValue, { color: colors.text, fontSize: 20 * textScale }]}>{calculateTotalSolo()}</Text>
+                            <Text style={[styles.currency, { color: colors.textSecondary, fontSize: 16 * textScale }]}> {currencySymbol}</Text>
+                        </View>
                     </View>
                 </View>
 
                 <TouchableOpacity
-                    style={styles.createButton}
+                    style={[AddScreenStyles.createButton, { backgroundColor: colors.buttonBg }]}
                     onPress={handleCreateDebtSolo}
                 >
-                    <Text style={styles.createButtonText}>Створити борг</Text>
+                    <Text style={[AddScreenStyles.createButtonText, { color: colors.buttonText, fontSize: 16 * textScale }]}>Створити борг</Text>
                 </TouchableOpacity>
             </View>
 
@@ -295,23 +302,37 @@ const SoloTab: React.FC<SoloTabProps> = ({ userList }) => {
                     setIsSuccess(false);
                 }}
                 onConfirm={confirmDebtCreation}
-                debtInfo={selectedUserSolo1 && selectedUserSolo2 ? {
-                    fromUser: selectedUserSolo1.name,
-                    toUser: selectedUserSolo2.name,
+                debtInfo={{
+                    fromUser: selectedUserSolo1?.name || 'Unknown',
+                    toUser: selectedUserSolo2?.name || 'Unknown',
                     totalAmount: calculateTotalSolo(),
                     itemsCount: debtItemsSolo.length
-                } : null}
+                }}
                 isSuccess={isSuccess}
             />
 
-            {error && (
-                <Animated.View style={[
-                    styles.errorContainer,
-                    { opacity: fadeAnim }
-                ]}>
-                    <Text style={styles.errorText}>{error}</Text>
-                </Animated.View>
-            )}
+            <QRScannerModal
+                visible={isScannerVisible}
+                onClose={() => setIsScannerVisible(false)}
+                users={[selectedUserSolo1, selectedUserSolo2].filter((u): u is User => u !== null)}
+                onAddUserItem={(userId, item) => {
+                    setDebtItemsSolo(prev => {
+                        // Якщо є пустий елемент спочатку, заміняємо його
+                        if (prev.length === 1 && prev[0].text === '' && prev[0].num === '0') {
+                            return [item];
+                        }
+                        return [...prev, item];
+                    });
+                }}
+                onAddTotalItem={(item) => {
+                    setDebtItemsSolo(prev => {
+                        if (prev.length === 1 && prev[0].text === '' && prev[0].num === '0') return [item];
+                        return [...prev, item];
+                    });
+                }}
+            />
+
+            <ErrorToast error={error} onHide={() => setError(null)} />
         </View>
     );
 };
@@ -326,69 +347,6 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'space-around',
         marginBottom: 20,
-    },
-    multyUserSelectorContainerSolo: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        marginVertical: 20,
-    },
-    multyUserButton: {
-        backgroundColor: '#F5F5F5',
-        borderRadius: 8,
-        padding: 15,
-        marginRight: 10,
-        minWidth: 50,
-        alignItems: 'center',
-        justifyContent: 'center',
-        borderWidth: 1,
-        borderColor: '#E0E0E0',
-    },
-    selectedUserName: {
-        fontSize: 16,
-        fontWeight: 'bold',
-    },
-    modalOverlay: {
-        flex: 1,
-        justifyContent: 'center',
-        alignItems: 'center',
-        backgroundColor: 'rgba(0,0,0,0.5)',
-    },
-    modalContent: {
-        backgroundColor: '#fff',
-        borderRadius: 8,
-        padding: 20,
-        width: '90%',
-        maxHeight: '80%',
-    },
-    modalUserItem: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        paddingVertical: 10,
-        borderBottomWidth: 1,
-        borderBottomColor: '#E0E0E0',
-    },
-    modalUserItemCheckboxArea: {
-        marginLeft: 15,
-    },
-    modalUserItemRadioArea: {
-        marginRight: 15,
-    },
-    modalUserName: {
-        fontSize: 16,
-        flex: 1,
-    },
-    modalCloseButton: {
-        padding: 10,
-        backgroundColor: '#000',
-        borderRadius: 5,
-        alignItems: 'center',
-        marginTop: 15,
-    },
-    modalCloseButtonText: {
-        color: 'white',
-        fontSize: 16,
     },
     debtItemList: {
         marginBottom: 10,
@@ -424,32 +382,17 @@ const styles = StyleSheet.create({
         fontSize: 16,
         color: 'grey',
     },
-    createButton: {
-        backgroundColor: '#000',
-        padding: 16,
-        borderRadius: 8,
-        alignItems: 'center',
-        marginHorizontal: 16,
-        marginVertical: 16,
-    },
-    createButtonText: {
-        color: '#fff',
-        fontSize: 16,
-        fontFamily: 'MontserratBold',
-    },
-    errorContainer: {
-        backgroundColor: '#FFEBEE',
-        padding: 10,
-        borderRadius: 8,
+    addButton: {
+        alignSelf: 'center',
+        padding: 12,
+        backgroundColor: '#E0E0E0',
+        marginTop: 4,
         marginBottom: 16,
+        borderRadius: 8,
         borderWidth: 1,
-        borderColor: '#E53935',
-    },
-    errorText: {
-        color: '#E53935',
-        fontSize: 14,
-        fontFamily: 'Montserrat',
-        textAlign: 'center',
+        borderColor: '#E0E0E0',
+        width: '100%',
+        alignItems: 'center',
     },
 });
 
