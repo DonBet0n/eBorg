@@ -7,7 +7,7 @@ import { User, Statistics, DebtGroup, Transaction } from '../types/debt';
 import { calculateDebts, isPaymentRecord } from '../utils/debtCalculations';
 import { registerForPushNotificationsAsync, sendPushNotification } from '../utils/pushNotifications';
 import { devLog } from '../utils/logger';
-import { readJson, writeJson, removeJson } from '../utils/localCache';
+import { readJson, writeJson } from '../utils/localCache';
 
 /*
  * Синхронізація даних:
@@ -24,7 +24,6 @@ const DIRECTIONS: Direction[] = ['fromUserId', 'toUserId'];
 
 // Запас на випадок, якщо записи з близькими серверними мітками часу стали видимі не по порядку
 const SYNC_OVERLAP_MS = 2 * 60 * 1000;
-const FULL_SYNC_TIMEOUT_MS = 30 * 1000;
 // Як часто перевіряти видалення при поверненні в застосунок
 const VERIFY_THROTTLE_MS = 60 * 1000;
 const CACHE_VERSION = 1;
@@ -170,12 +169,10 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
   const profileRequestsRef = useRef<Set<string>>(new Set());
 
   const [syncEpoch, setSyncEpoch] = useState(0);
-  const syncEpochRef = useRef(0);
-  const forceFullSyncRef = useRef(false);
-  const serverSyncWaitersRef = useRef<{ epoch: number; resolve: () => void }[]>([]);
   const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const verifyDeletionsRef = useRef<(() => Promise<void>) | null>(null);
   const lastVerifyRef = useRef(0);
+  const pushTokenSyncedRef = useRef<string | null>(null);
 
   const uid = user?.id;
 
@@ -284,6 +281,27 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
     return () => unsubscribe();
   }, []);
 
+  // Під час реєстрації обробник входу може спрацювати раніше, ніж записано профіль, тому токен
+  // реєструється і з getCurrentUser. Ref не дає зробити це двічі за одну сесію.
+  const syncPushToken = useCallback(async (userId: string, savedToken?: string) => {
+    if (pushTokenSyncedRef.current === userId) return undefined;
+    pushTokenSyncedRef.current = userId;
+    try {
+      const token = await registerForPushNotificationsAsync();
+      if (token && savedToken !== token) {
+        await firestore().collection('users').doc(userId).update({
+          expoPushToken: token,
+          updatedAt: firestore.FieldValue.serverTimestamp(),
+        });
+        return token;
+      }
+    } catch (e) {
+      pushTokenSyncedRef.current = null;
+      devLog('Failed to get push token', e);
+    }
+    return undefined;
+  }, []);
+
   useEffect(() => {
     const unsubscribe = auth().onAuthStateChanged(async (firebaseUser) => {
       if (firebaseUser) {
@@ -292,28 +310,19 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
         if (userDataRaw) {
           const userData = { id: firebaseUser.uid, ...userDataRaw } as User;
 
-          try {
-            const token = await registerForPushNotificationsAsync();
-            if (token && userData.expoPushToken !== token) {
-              userData.expoPushToken = token;
-              await firestore().collection('users').doc(firebaseUser.uid).update({
-                expoPushToken: token,
-                updatedAt: firestore.FieldValue.serverTimestamp(),
-              });
-            }
-          } catch (e) {
-            devLog('Failed to get push token', e);
-          }
+          const token = await syncPushToken(firebaseUser.uid, userData.expoPushToken);
+          if (token) userData.expoPushToken = token;
 
           setUser(userData);
           upsertUsers([parseUser(firebaseUser.uid, userDataRaw)]);
         }
       } else {
+        pushTokenSyncedRef.current = null;
         setUser(null);
       }
     });
     return () => unsubscribe();
-  }, [upsertUsers]);
+  }, [upsertUsers, syncPushToken]);
 
   const getCurrentUser = useCallback(async () => {
     const firebaseUser = auth().currentUser;
@@ -324,10 +333,12 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
       const userData = { id: firebaseUser.uid, ...userDataRaw } as User;
       setUser(userData);
       upsertUsers([parseUser(firebaseUser.uid, userDataRaw)]);
+      // Не чекаємо: запит дозволу на сповіщення не має затримувати вхід
+      syncPushToken(firebaseUser.uid, userData.expoPushToken);
       return userData;
     }
     return null;
-  }, [upsertUsers]);
+  }, [upsertUsers, syncPushToken]);
 
   const logout = useCallback(async () => {
     await auth().signOut();
@@ -352,7 +363,6 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    const epoch = syncEpoch;
     let cancelled = false;
     const listeners: Record<Direction, (() => void) | null> = { fromUserId: null, toUserId: null };
     const fullMode: Record<Direction, boolean> = { fromUserId: false, toUserId: false };
@@ -365,7 +375,11 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
       const cache = debtsCacheRef.current;
       if (cancelled || !cache) return;
 
-      snap.docChanges().forEach(change => {
+      const changes = snap.docChanges();
+      // Знімки лише зі зміною метаданих з кешу нічого не дають; важливі тільки підтвердження від сервера
+      if (changes.length === 0 && snap.metadata.fromCache) return;
+
+      changes.forEach(change => {
         const doc = change.doc;
         if (change.type === 'removed') {
           delete cache.debts[doc.id];
@@ -400,11 +414,6 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
         if (serverSynced.fromUserId && serverSynced.toUserId) {
           setDataSource('server');
           setLastUpdate(new Date(cache.lastServerContact));
-          serverSyncWaitersRef.current = serverSyncWaitersRef.current.filter(waiter => {
-            if (waiter.epoch > epoch) return true;
-            waiter.resolve();
-            return false;
-          });
         }
 
         // Після першої дельти перевіряємо, чи не видаляли щось, поки нас не було
@@ -426,7 +435,11 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
       if (since !== null) {
         query = query.where('updatedAt', '>', firestore.Timestamp.fromMillis(Math.max(0, since - SYNC_OVERLAP_MS)));
       }
+      // includeMetadataChanges: якщо кеш Firestore уже збігається з сервером, підтвердження від сервера
+      // змінює лише метадані (fromCache → false), і без цього прапорця такий знімок не приходить —
+      // тоді повна синхронізація чекала до тайм-ауту й повідомляла про помилку
       listeners[field] = query.onSnapshot(
+        { includeMetadataChanges: true },
         snap => applySnapshot(field, snap, since === null),
         (error: any) => {
           devLog(`Firebase ${field} snapshot error:`, error);
@@ -468,11 +481,9 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
     };
 
     (async () => {
-      let cache: DebtsCache | null = null;
-      if (forceFullSyncRef.current) {
-        forceFullSyncRef.current = false;
-        await removeJson(debtsCacheFile(uid));
-      } else {
+      // Після повної синхронізації свіжий кеш уже в пам'яті — файл міг ще не дописатись
+      let cache: DebtsCache | null = debtsCacheRef.current?.ownerId === uid ? debtsCacheRef.current : null;
+      if (!cache) {
         const saved = await readJson<DebtsCache>(debtsCacheFile(uid));
         if (saved?.version === CACHE_VERSION && saved.ownerId === uid) cache = saved;
       }
@@ -703,22 +714,45 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
     }
     if (!uid) return;
 
-    const epoch = ++syncEpochRef.current;
-    const debtsSynced = new Promise<void>((resolve, reject) => {
-      serverSyncWaitersRef.current.push({ epoch, resolve });
-      setTimeout(() => reject(new Error('Full sync timeout')), FULL_SYNC_TIMEOUT_MS);
-    });
-    forceFullSyncRef.current = true;
-    setSyncEpoch(epoch);
-
+    // Читаємо борги напряму з сервера, а не чекаємо подій слухача: так результат гарантований —
+    // або свіжі дані, або справжня помилка замість тайм-ауту
     try {
-      await Promise.all([debtsSynced, syncUsers(true)]);
+      const [snaps] = await Promise.all([
+        Promise.all(DIRECTIONS.map(field =>
+          firestore().collection('debts').where(field, '==', uid).get({ source: 'server' }))),
+        syncUsers(true),
+      ]);
+
+      const cache = emptyDebtsCache(uid);
+      DIRECTIONS.forEach((field, i) => {
+        let maxSeen = 0;
+        snaps[i].docs.forEach(doc => {
+          const data = doc.data();
+          if (!data) return;
+          cache.debts[doc.id] = parseDebt(doc.id, data);
+          const updatedAt = toMillis(data.updatedAt);
+          if (updatedAt && updatedAt > maxSeen) maxSeen = updatedAt;
+        });
+        cache.lastSync[field] = maxSeen || null;
+      });
+      cache.lastServerContact = Date.now();
+
+      // Новий кеш ставимо до перезапуску слухачів: старі під час закриття збережуть саме його
+      debtsCacheRef.current = cache;
+      setDataSource('server');
+      setLastUpdate(new Date(cache.lastServerContact));
+      debtsChanged();
+      persistDebtsNow();
+      setSyncEpoch(e => e + 1);
+
       Alert.alert('Успіх', 'Дані успішно синхронізовано з сервером!');
     } catch (error) {
       devLog('Full sync error:', error);
-      Alert.alert('Помилка', 'Не вдалося синхронізуватися з сервером. Спробуйте пізніше.');
+      const code = (error as any)?.code;
+      const details = code ? `\n\n(${code})` : '';
+      Alert.alert('Помилка', `Не вдалося синхронізуватися з сервером. Спробуйте пізніше.${details}`);
     }
-  }, [uid, syncUsers]);
+  }, [uid, syncUsers, debtsChanged, persistDebtsNow]);
 
   return (
     <FirebaseContext.Provider value={{

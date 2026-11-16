@@ -1,84 +1,83 @@
-import React, { useState, useCallback, useRef, useEffect } from 'react';
-import { StyleSheet, Text, View, TouchableOpacity, Vibration } from 'react-native';
-import { MaterialIcons } from '@expo/vector-icons';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
+import { Alert, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
+import Icon from '@/components/ui/Icon';
 import DebtItemComponent from '../DebtItem';
 import { User, DebtItem } from '../../types/debt';
 import { useFirebase } from '../../contexts/FirebaseContext';
-
-import Animated, { LinearTransition } from 'react-native-reanimated';
+import { useAppTheme } from '../../contexts/ThemeContext';
+import { formatAmount } from '../../utils/debtCalculations';
 import ConfirmDebtModal from './ConfirmDebtModal';
 import UserSelectionModal from './UserSelectionModal';
 import ErrorToast from '../ui/ErrorToast';
-import AddScreenStyles from '../../styles/AddScreenStyles';
-import { useAppTheme } from '../../contexts/ThemeContext';
 import QRScannerModal from '../QRScannerModal';
+import { AddItemButton, ClearFormButton, FormFooter, ItemsHeader, PersonRow, displayName, formStyles, useFormColors } from './FormParts';
 
 interface SoloTabProps {
     userList: User[];
-    onHasDataChange?: (hasData: boolean) => void;
+    onHasItemsChange?: (hasItems: boolean) => void;
+    // Шапка екрана прокручується разом з формою
+    header?: React.ReactNode;
 }
 
-const SoloTab: React.FC<SoloTabProps> = ({ userList, onHasDataChange }) => {
-    const { createDebts, notifyUser } = useFirebase();
-    const { colors, textScale, currencySymbol } = useAppTheme();
+const EMPTY_ITEM: DebtItem = { id: '1', text: '', num: '0' };
+
+const SoloTab: React.FC<SoloTabProps> = ({ userList, onHasItemsChange, header }) => {
+    const { user: currentUser, createDebts, notifyUser } = useFirebase();
+    const { colors, currencySymbol } = useAppTheme();
+    const { surface, field: fieldBg } = useFormColors();
     const [isUserListModalVisible, setUserListModalVisible] = useState(false);
-    const [debtItemsSolo, setDebtItemsSolo] = useState<DebtItem[]>([{ id: '1', text: '', num: '0' }]);
+    const [debtItemsSolo, setDebtItemsSolo] = useState<DebtItem[]>([EMPTY_ITEM]);
     const [selectedUserSolo1, setSelectedUserSolo1] = useState<User | null>(null);
     const [selectedUserSolo2, setSelectedUserSolo2] = useState<User | null>(null);
-    const [currentUserSelectorSolo, setCurrentUserSelectorSolo] = useState<'user1' | 'user2' | null>(null);
+    // Для кого відкрито список людей: user1 — хто винен, user2 — кому
+    const [currentUserSelectorSolo, setCurrentUserSelectorSolo] = useState<'user1' | 'user2'>('user1');
     const [isScannerVisible, setIsScannerVisible] = useState(false);
-    
-    useEffect(() => {
-        const hasData = selectedUserSolo1 !== null || 
-                        selectedUserSolo2 !== null || 
-                        debtItemsSolo.length > 1 || 
-                        (debtItemsSolo[0] && (debtItemsSolo[0].text.trim() !== '' || debtItemsSolo[0].num !== '0'));
-        onHasDataChange?.(hasData);
-    }, [selectedUserSolo1, selectedUserSolo2, debtItemsSolo, onHasDataChange]);
 
     const lastItemRef = useRef<{ focusDescription: () => void }>(null);
     const [confirmModalVisible, setConfirmModalVisible] = useState(false);
     const [isSuccess, setIsSuccess] = useState(false);
+    const [isSubmitting, setIsSubmitting] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [isViewMode, setIsViewMode] = useState(false);
 
-    // --- Функції Modal User List ---
-    const openUserListModal = useCallback(() => {
+    const firstItem = debtItemsSolo[0];
+    // Порожній початковий рядок за позицію не рахується
+    const hasItems = debtItemsSolo.length > 1 ||
+                     (!!firstItem && (firstItem.text.trim() !== '' || (firstItem.num !== '0' && firstItem.num !== '')));
+    const hasData = selectedUserSolo1 !== null || selectedUserSolo2 !== null || hasItems;
+
+    useEffect(() => {
+        onHasItemsChange?.(hasItems);
+    }, [hasItems, onHasItemsChange]);
+
+    // --- Вибір людей ---
+    const openUserListModalSolo = useCallback((selector: 'user1' | 'user2') => {
+        setCurrentUserSelectorSolo(selector);
         setUserListModalVisible(true);
     }, []);
 
     const closeUserListModal = useCallback(() => {
         setUserListModalVisible(false);
-        setCurrentUserSelectorSolo(null); // Reset selector when closing modal
     }, []);
 
-    // --- Функції для Solo Tab ---
-    const openUserListModalSolo = useCallback((selector: 'user1' | 'user2') => {
-        setCurrentUserSelectorSolo(selector);
-        openUserListModal();
-    }, [openUserListModal]);
-
-
     const handleUserSelectionChangeSolo = useCallback((user: User) => {
+        // Якщо цю людину вже обрано з іншого боку, сторони міняються місцями
         if (currentUserSelectorSolo === 'user1') {
+            if (selectedUserSolo2?.id === user.id) setSelectedUserSolo2(selectedUserSolo1);
             setSelectedUserSolo1(user);
-            if (selectedUserSolo2?.id === user.id) {
-                setSelectedUserSolo1(null);
-                Vibration.vibrate(500);
-                return;
-            }
-        } else if (currentUserSelectorSolo === 'user2') {
+        } else {
+            if (selectedUserSolo1?.id === user.id) setSelectedUserSolo1(selectedUserSolo2);
             setSelectedUserSolo2(user);
-            if (selectedUserSolo1?.id === user.id) {
-                setSelectedUserSolo2(null);
-                Vibration.vibrate(500);
-                return;
-            }
         }
         closeUserListModal();
-    }, [closeUserListModal, currentUserSelectorSolo, selectedUserSolo2, selectedUserSolo1]);
+    }, [closeUserListModal, currentUserSelectorSolo, selectedUserSolo1, selectedUserSolo2]);
 
+    const swapUsers = useCallback(() => {
+        setSelectedUserSolo1(selectedUserSolo2);
+        setSelectedUserSolo2(selectedUserSolo1);
+    }, [selectedUserSolo1, selectedUserSolo2]);
 
+    // --- Позиції ---
     const calculateTotalSolo = useCallback(() => {
         return debtItemsSolo.reduce((sum, item) => {
             const num = parseFloat(item.num) || 0;
@@ -108,39 +107,67 @@ const SoloTab: React.FC<SoloTabProps> = ({ userList, onHasDataChange }) => {
         );
     }, []);
 
-    const showError = (message: string) => {
-        setError(message);
+    // Сканер додає позиції в один список; порожній початковий рядок при цьому замінюється
+    const addScannedItem = useCallback((item: DebtItem) => {
+        setDebtItemsSolo(prev => {
+            if (prev.length === 1 && prev[0].text === '' && prev[0].num === '0') return [item];
+            return [...prev, item];
+        });
+    }, []);
+
+    const resetForm = useCallback(() => {
+        setDebtItemsSolo([EMPTY_ITEM]);
+        setSelectedUserSolo1(null);
+        setSelectedUserSolo2(null);
+    }, []);
+
+    const confirmClear = () => {
+        Alert.alert(
+            'Очистити форму?',
+            'Обраних людей і всі позиції буде прибрано.',
+            [
+                { text: 'Скасувати', style: 'cancel' },
+                { text: 'Очистити', style: 'destructive', onPress: resetForm },
+            ]
+        );
     };
 
+    // --- Створення ---
     const validateDebtItems = () => {
         if (!selectedUserSolo1 || !selectedUserSolo2) {
-            showError('Виберіть користувачів');
+            setError('Оберіть, хто винен і кому');
             return false;
         }
 
-        const hasEmptyAmount = debtItemsSolo.some(item => 
-            !item.num || Number(item.num) === 0
-        );
+        // Борг можна записати лише за своєї участі: чужі борги автор не бачить і не може підтвердити
+        if (selectedUserSolo1.id !== currentUser?.id && selectedUserSolo2.id !== currentUser?.id) {
+            setError('Ви маєте бути однією зі сторін боргу');
+            return false;
+        }
+
+        // Сума має бути числом більше нуля: порожнє поле чи сама крапка не проходять
+        const hasEmptyAmount = debtItemsSolo.some(item => !(Number(item.num) > 0));
 
         if (hasEmptyAmount) {
-            showError('Видаліть елементи з нульовою сумою');
+            setError('Вкажіть суму в кожній позиції або видаліть порожні');
             return false;
         }
 
         return true;
     };
 
-    const handleCreateDebtSolo = useCallback(async () => {
+    const handleCreateDebtSolo = () => {
         setError(null); // Clear previous error
         if (!validateDebtItems()) return;
-        
+
         setConfirmModalVisible(true);
-    }, [validateDebtItems]);
+    };
 
     const confirmDebtCreation = async () => {
-        setError(null); // Clear error on success
-        if (!selectedUserSolo1 || !selectedUserSolo2) return;
-        
+        setError(null);
+        if (!selectedUserSolo1 || !selectedUserSolo2 || isSubmitting) return;
+
+        setIsSubmitting(true);
         try {
             const deptId = Date.now().toString();
 
@@ -153,147 +180,131 @@ const SoloTab: React.FC<SoloTabProps> = ({ userList, onHasDataChange }) => {
                     text: item.text?.trim() || 'Без опису',
                     amount: Number(Number(item.num).toFixed(2)),
                 })));
-            
+
             // Push-сповіщення кожному учаснику, крім того, хто створює борг (notifyUser сам пропускає себе)
             const debtor = selectedUserSolo1;
             const creditor = selectedUserSolo2;
             const totalAmount = Number(debtItemsSolo
                 .reduce((sum, item) => sum + (parseFloat(item.num) || 0), 0)
                 .toFixed(2));
-            notifyUser(debtor.id, 'eBorg', `Ви винні ${creditor.name} ${totalAmount} грн.`);
-            notifyUser(creditor.id, 'eBorg', `Вам винен ${debtor.name} ${totalAmount} грн.`);
+            notifyUser(debtor.id, 'eBorg', `${creditor.name}: ваш борг ${totalAmount} ${currencySymbol}`);
+            notifyUser(creditor.id, 'eBorg', `${debtor.name}: борг вам ${totalAmount} ${currencySymbol}`);
 
             setIsSuccess(true);
             // Reset form after delay
             setTimeout(() => {
                 setIsSuccess(false);
                 setConfirmModalVisible(false);
-                setDebtItemsSolo([{ id: '1', text: '', num: '0' }]);
-                setSelectedUserSolo1(null);
-                setSelectedUserSolo2(null);
+                resetForm();
             }, 2000);
 
         } catch (error) {
             console.error('Error creating debts:', error);
-            setError('Помилка при створенні боргу');
+            // Повідомлення про помилку живе на формі, тому вікно підтвердження закриваємо
+            setConfirmModalVisible(false);
+            setError('Не вдалося створити борг. Спробуйте ще раз');
+        } finally {
+            setIsSubmitting(false);
         }
     };
 
+    const total = calculateTotalSolo();
+
     return (
-        <View style={styles.soloTabContainer}>
-            {/* Person Selector for Solo */}
-            <View style={styles.personSelectorContainer}>
-                <TouchableOpacity
-                    style={AddScreenStyles.userSelectorContainer}
-                    onPress={() => openUserListModalSolo('user1')}
-                >
-                    <View style={[AddScreenStyles.userButton, { backgroundColor: colors.inputBg, borderColor: colors.border }]}>
-                        {selectedUserSolo1 ? (
-                            <Text style={[AddScreenStyles.selectedUserName, { color: colors.text, fontSize: 16 * textScale }]}>{selectedUserSolo1.name}</Text>
-                        ) : (
-                            <MaterialIcons name="add" size={24} color={colors.iconSecondary} />
-                        )}
+        <View style={formStyles.container}>
+            <ScrollView
+                contentContainerStyle={formStyles.content}
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={false}
+            >
+                {header}
+                {/* Хто → кому */}
+                <View style={[formStyles.card, styles.peopleCard, { backgroundColor: surface }]}>
+                    <View style={styles.people}>
+                        <PersonRow
+                            label="Хто винен"
+                            placeholder="Обрати людину"
+                            users={selectedUserSolo1 ? [selectedUserSolo1] : []}
+                            onPress={() => openUserListModalSolo('user1')}
+                        />
+                        <PersonRow
+                            label="Кому винен"
+                            placeholder="Обрати людину"
+                            users={selectedUserSolo2 ? [selectedUserSolo2] : []}
+                            onPress={() => openUserListModalSolo('user2')}
+                            divider
+                        />
                     </View>
-                </TouchableOpacity>
+                    <TouchableOpacity
+                        style={[styles.swapButton, { backgroundColor: fieldBg }, !selectedUserSolo1 && !selectedUserSolo2 && styles.swapButtonDisabled]}
+                        onPress={swapUsers}
+                        disabled={!selectedUserSolo1 && !selectedUserSolo2}
+                        accessibilityRole="button"
+                        accessibilityLabel="Поміняти місцями, хто винен і кому"
+                    >
+                        <Icon name="swap" size={20} color={colors.text} />
+                    </TouchableOpacity>
+                </View>
 
-                <MaterialIcons
-                    name={"arrow-forward"}
-                    size={30}
-                    color={colors.icon}
+                {/* Що саме */}
+                <ItemsHeader
+                    isViewMode={isViewMode}
+                    onToggleViewMode={() => setIsViewMode(value => !value)}
+                    onScan={() => setIsScannerVisible(true)}
                 />
+                <View style={[formStyles.card, formStyles.itemsCard, { backgroundColor: surface }]}>
+                    {debtItemsSolo.map((item, index) => (
+                        <DebtItemComponent
+                            key={item.id}
+                            ref={index === debtItemsSolo.length - 1 ? lastItemRef : null}
+                            id={item.id}
+                            text={item.text}
+                            num={item.num.toString()}
+                            onTextChange={(text) => updateDebtItemSolo(item.id, 'text', text)}
+                            onNumChange={(num) => updateDebtItemSolo(item.id, 'num', num)}
+                            onDelete={() => deleteDebtItemSolo(item.id)}
+                            isLast={false}
+                            isOnly={debtItemsSolo.length === 1}
+                            onAdd={addDebtItemSolo}
+                            isViewMode={isViewMode}
+                            index={index}
+                            totalCount={debtItemsSolo.length}
+                        />
+                    ))}
+                    {!isViewMode && <AddItemButton onPress={addDebtItemSolo} />}
+                </View>
 
-                <TouchableOpacity
-                    style={AddScreenStyles.userSelectorContainer}
-                    onPress={() => openUserListModalSolo('user2')}
-                >
-                    <View style={[AddScreenStyles.userButton, { backgroundColor: colors.inputBg, borderColor: colors.border }]}>
-                        {selectedUserSolo2 ? (
-                            <Text style={[AddScreenStyles.selectedUserName, { color: colors.text, fontSize: 16 * textScale }]}>{selectedUserSolo2.name}</Text>
-                        ) : (
-                            <MaterialIcons name="add" size={24} color={colors.iconSecondary} />
-                        )}
+                {hasData && (
+                    <View>
+                        <ClearFormButton onPress={confirmClear} />
                     </View>
-                </TouchableOpacity>
-            </View>
+                )}
+            </ScrollView>
+
+            {/* Скільки разом і головна дія */}
+            <FormFooter
+                rows={[{ label: 'Разом', value: `${formatAmount(total)} ${currencySymbol}`, primary: true }]}
+                buttonLabel="Створити борг"
+                onPress={handleCreateDebtSolo}
+            >
+                <ErrorToast error={error} onHide={() => setError(null)} style={formStyles.toast} />
+            </FormFooter>
 
             <UserSelectionModal
                 visible={isUserListModalVisible}
                 onClose={closeUserListModal}
+                title={currentUserSelectorSolo === 'user1' ? 'Хто винен' : 'Кому винен'}
                 userList={userList}
-                mode="solo"
-                selectedUserId={currentUserSelectorSolo === 'user1' ? selectedUserSolo1?.id : selectedUserSolo2?.id}
-                onSelectSolo={handleUserSelectionChangeSolo}
+                currentUserId={currentUser?.id}
+                isSelected={(user) => user.id === (currentUserSelectorSolo === 'user1' ? selectedUserSolo1?.id : selectedUserSolo2?.id)}
+                onSelect={handleUserSelectionChangeSolo}
+                // Людину з іншого боку теж можна обрати: тоді сторони поміняються місцями
+                getTag={(user) => {
+                    if (currentUserSelectorSolo === 'user1' && user.id === selectedUserSolo2?.id) return 'зараз у «Кому винен»';
+                    if (currentUserSelectorSolo === 'user2' && user.id === selectedUserSolo1?.id) return 'зараз у «Хто винен»';
+                    return undefined;
+                }}
             />
-
-
-
-            {/* Debt Items List for Solo */}
-            <Animated.FlatList
-                data={debtItemsSolo}
-                keyExtractor={(item) => item.id}
-                itemLayoutAnimation={LinearTransition}
-                renderItem={({ item, index }) => (
-                    <DebtItemComponent
-                        ref={index === debtItemsSolo.length - 1 ? lastItemRef : null}
-                        id={item.id}
-                        text={item.text}
-                        num={item.num.toString()}
-                        onTextChange={(text) => updateDebtItemSolo(item.id, 'text', text)}
-                        onNumChange={(num) => updateDebtItemSolo(item.id, 'num', num)}
-                        onDelete={() => deleteDebtItemSolo(item.id)}
-                        isLast={false} // No longer used inside
-                        isOnly={debtItemsSolo.length === 1}
-                        onAdd={() => {}} // No longer used inside
-                        isViewMode={isViewMode}
-                        index={index}
-                        totalCount={debtItemsSolo.length}
-                    />
-                )}
-                ListFooterComponent={
-                    !isViewMode ? (
-                        <TouchableOpacity onPress={addDebtItemSolo} style={[styles.addButton, { backgroundColor: colors.inputBg, borderColor: colors.border }]}>
-                            <MaterialIcons name="add" size={24} color={colors.iconSecondary} />
-                        </TouchableOpacity>
-                    ) : null
-                }
-                style={styles.debtItemList}
-            />
-
-            {/* Total with Create Button for Solo */}
-            <View style={[styles.bottomContainer, { borderTopColor: colors.border }]}>
-                <View style={[styles.totalContainer, { borderTopColor: colors.border, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}>
-                    <View style={{ flexDirection: 'row', marginRight: 12 }}>
-                        <TouchableOpacity 
-                            style={{ backgroundColor: colors.buttonBg, alignItems: 'center', justifyContent: 'center', padding: 12, borderRadius: 12, width: 48, height: 48, marginRight: 8 }}
-                            onPress={() => setIsScannerVisible(true)}
-                        >
-                            <MaterialIcons name="qr-code-scanner" size={24} color={colors.buttonText} />
-                        </TouchableOpacity>
-                        
-                        <TouchableOpacity 
-                            style={{ backgroundColor: isViewMode ? colors.buttonBg : colors.inputBg, borderColor: isViewMode ? colors.buttonBg : colors.border, borderWidth: isViewMode ? 0 : 1, alignItems: 'center', justifyContent: 'center', padding: 12, borderRadius: 12, width: 48, height: 48 }}
-                            onPress={() => setIsViewMode(!isViewMode)}
-                        >
-                            <MaterialIcons name={isViewMode ? "visibility-off" : "visibility"} size={24} color={isViewMode ? colors.buttonText : colors.icon} />
-                        </TouchableOpacity>
-                    </View>
-
-                    <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, justifyContent: 'space-between' }}>
-                        <Text style={[styles.totalText, { color: colors.text, fontSize: 18 * textScale }]}>Total</Text>
-                        <View style={styles.totalValueContainer}>
-                            <Text style={[styles.totalValue, { color: colors.text, fontSize: 20 * textScale }]}>{calculateTotalSolo()}</Text>
-                            <Text style={[styles.currency, { color: colors.textSecondary, fontSize: 16 * textScale }]}> {currencySymbol}</Text>
-                        </View>
-                    </View>
-                </View>
-
-                <TouchableOpacity
-                    style={[AddScreenStyles.createButton, { backgroundColor: colors.buttonBg }]}
-                    onPress={handleCreateDebtSolo}
-                >
-                    <Text style={[AddScreenStyles.createButtonText, { color: colors.buttonText, fontSize: 16 * textScale }]}>Створити борг</Text>
-                </TouchableOpacity>
-            </View>
 
             <ConfirmDebtModal
                 visible={confirmModalVisible}
@@ -302,97 +313,48 @@ const SoloTab: React.FC<SoloTabProps> = ({ userList, onHasDataChange }) => {
                     setIsSuccess(false);
                 }}
                 onConfirm={confirmDebtCreation}
-                debtInfo={{
-                    fromUser: selectedUserSolo1?.name || 'Unknown',
-                    toUser: selectedUserSolo2?.name || 'Unknown',
-                    totalAmount: calculateTotalSolo(),
-                    itemsCount: debtItemsSolo.length
+                summary={{
+                    rows: [
+                        { label: 'Хто винен', value: selectedUserSolo1 ? displayName(selectedUserSolo1) : '—' },
+                        { label: 'Кому', value: selectedUserSolo2 ? displayName(selectedUserSolo2) : '—' },
+                        { label: 'Позицій', value: String(debtItemsSolo.length) },
+                    ],
+                    amountLabel: 'Сума боргу',
+                    amount: total,
                 }}
                 isSuccess={isSuccess}
+                isSubmitting={isSubmitting}
             />
 
             <QRScannerModal
                 visible={isScannerVisible}
                 onClose={() => setIsScannerVisible(false)}
                 users={[selectedUserSolo1, selectedUserSolo2].filter((u): u is User => u !== null)}
-                onAddUserItem={(userId, item) => {
-                    setDebtItemsSolo(prev => {
-                        // Якщо є пустий елемент спочатку, заміняємо його
-                        if (prev.length === 1 && prev[0].text === '' && prev[0].num === '0') {
-                            return [item];
-                        }
-                        return [...prev, item];
-                    });
-                }}
-                onAddTotalItem={(item) => {
-                    setDebtItemsSolo(prev => {
-                        if (prev.length === 1 && prev[0].text === '' && prev[0].num === '0') return [item];
-                        return [...prev, item];
-                    });
-                }}
+                onAddUserItem={(userId, item) => addScannedItem(item)}
+                onAddTotalItem={addScannedItem}
             />
-
-            <ErrorToast error={error} onHide={() => setError(null)} />
         </View>
     );
 };
 
 const styles = StyleSheet.create({
-    soloTabContainer: {
+    peopleCard: {
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    people: {
         flex: 1,
-        paddingHorizontal: 16,
     },
-    personSelectorContainer: {
-        flexDirection: 'row',
+    swapButton: {
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        justifyContent: 'center',
         alignItems: 'center',
-        justifyContent: 'space-around',
-        marginBottom: 20,
+        marginRight: 12,
     },
-    debtItemList: {
-        marginBottom: 10,
-        flexGrow: 1,
-    },
-    bottomContainer: {
-        borderTopWidth: 1,
-        borderTopColor: '#E0E0E0',
-    },
-    totalContainer: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        paddingVertical: 15,
-        paddingHorizontal: 10,
-        borderTopWidth: 1,
-        borderTopColor: '#E0E0E0',
-    },
-    totalText: {
-        fontSize: 18,
-        fontWeight: 'bold',
-    },
-    totalValueContainer: {
-        flexDirection: 'row',
-        alignItems: 'baseline',
-    },
-    totalValue: {
-        fontSize: 20,
-        fontWeight: 'bold',
-        marginRight: 5,
-    },
-    currency: {
-        fontSize: 16,
-        color: 'grey',
-    },
-    addButton: {
-        alignSelf: 'center',
-        padding: 12,
-        backgroundColor: '#E0E0E0',
-        marginTop: 4,
-        marginBottom: 16,
-        borderRadius: 8,
-        borderWidth: 1,
-        borderColor: '#E0E0E0',
-        width: '100%',
-        alignItems: 'center',
+    swapButtonDisabled: {
+        opacity: 0.4,
     },
 });
 

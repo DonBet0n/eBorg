@@ -1,63 +1,118 @@
-import React, { useState, useEffect } from 'react';
-import { View, TouchableOpacity, Text, StyleSheet } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { View, TouchableOpacity, Text, StyleSheet, Animated } from 'react-native';
 import SoloTab from '../../components/AddScreen/Solo';
 import MultyTab from '../../components/AddScreen/Multy';
+import { useFormColors } from '../../components/AddScreen/FormParts';
 import { useFirebase } from '../../contexts/FirebaseContext';
 import { useAppTheme } from '../../contexts/ThemeContext';
+import { useSetTabSwipeLocked } from '../../contexts/TabSwipeContext';
 
-import { useNavigation } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
+type Mode = 'solo' | 'multy';
+
+const SWITCH_PADDING = 4;
+
+// Два способи записати борг: одна людина винна іншій або один заплатив за компанію
+const MODES: { key: Mode; label: string }[] = [
+    { key: 'solo', label: 'Між двома' },
+    { key: 'multy', label: 'Розділити чек' },
+];
 
 const AddScreen: React.FC = () => {
-    const [selectedTab, setSelectedTab] = useState<'solo' | 'multy'>('solo');
+    const [selectedTab, setSelectedTab] = useState<Mode>('solo');
     // Список користувачів береться з локального кешу, який синхронізує FirebaseContext
     const { users } = useFirebase();
-    const { colors } = useAppTheme();
-    const navigation = useNavigation();
-    const [soloHasData, setSoloHasData] = useState(false);
-    const [multyHasData, setMultyHasData] = useState(false);
+    const { colors, textScale } = useAppTheme();
+    const { surface } = useFormColors();
+    const insets = useSafeAreaInsets();
+    // Поки в будь-якій формі є позиції, свайп між вкладками вимкнено, щоб випадково не піти з екрана
+    const [soloHasItems, setSoloHasItems] = useState(false);
+    const [multyHasItems, setMultyHasItems] = useState(false);
+    const setSwipeLocked = useSetTabSwipeLocked();
+    const hasItems = soloHasItems || multyHasItems;
 
     useEffect(() => {
-        navigation.setOptions({ swipeEnabled: !(soloHasData || multyHasData) });
-    }, [soloHasData, multyHasData, navigation]);
+        setSwipeLocked(hasItems);
+    }, [hasItems, setSwipeLocked]);
+
+    useEffect(() => () => setSwipeLocked(false), [setSwipeLocked]);
+
+    // Ширина одного сегмента: повзунок їде рівно на неї
+    const [segmentWidth, setSegmentWidth] = useState(0);
+    const thumbX = useRef(new Animated.Value(0)).current;
+    const selectedIndex = MODES.findIndex(mode => mode.key === selectedTab);
+
+    useEffect(() => {
+        Animated.spring(thumbX, {
+            toValue: selectedIndex * segmentWidth,
+            useNativeDriver: true,
+            speed: 20,
+            bounciness: 4,
+        }).start();
+    }, [selectedIndex, segmentWidth, thumbX]);
+
+    // Шапка (заголовок і перемикач) є в кожній формі й прокручується з нею;
+    // повзунок спільний, тож у щойно показаній формі він плавно доїжджає до вибраного
+    const header = (
+        <View style={styles.header}>
+            <Text style={[styles.title, { color: colors.text, fontSize: 28 * textScale }]} accessibilityRole="header">
+                Новий борг
+            </Text>
+
+            <View
+                style={[styles.modeSwitch, { backgroundColor: surface }]}
+                accessibilityRole="tablist"
+                onLayout={e => {
+                    // Шапка у прихованій формі має нульову ширину — її вимір пропускаємо
+                    const { width } = e.nativeEvent.layout;
+                    if (width > 0) setSegmentWidth((width - SWITCH_PADDING * 2) / MODES.length);
+                }}
+            >
+                {segmentWidth > 0 && (
+                    <Animated.View
+                        pointerEvents="none"
+                        style={[
+                            styles.modeThumb,
+                            { width: segmentWidth, backgroundColor: colors.text, transform: [{ translateX: thumbX }] },
+                        ]}
+                    />
+                )}
+                {MODES.map(mode => {
+                    const selected = selectedTab === mode.key;
+                    return (
+                        <TouchableOpacity
+                            key={mode.key}
+                            style={styles.modeButton}
+                            onPress={() => setSelectedTab(mode.key)}
+                            activeOpacity={0.7}
+                            accessibilityRole="tab"
+                            accessibilityState={{ selected }}
+                        >
+                            <Text
+                                style={[
+                                    selected ? styles.modeTextSelected : styles.modeText,
+                                    { color: selected ? colors.background : colors.textSecondary, fontSize: 15 * textScale },
+                                ]}
+                                numberOfLines={1}
+                            >
+                                {mode.label}
+                            </Text>
+                        </TouchableOpacity>
+                    );
+                })}
+            </View>
+        </View>
+    );
 
     return (
-        <View style={[styles.container, { backgroundColor: colors.background }]}>
-            <View style={[styles.tabBar, { backgroundColor: colors.background, borderColor: colors.border }]}>
-                <TouchableOpacity
-                    style={[
-                        styles.tabButton, 
-                        { backgroundColor: colors.card },
-                        selectedTab === 'solo' && { backgroundColor: colors.buttonBg }
-                    ]}
-                    onPress={() => setSelectedTab('solo')}
-                >
-                    <Text style={[
-                        styles.tabButtonText, 
-                        { color: colors.textSecondary },
-                        selectedTab === 'solo' && { color: colors.buttonText }
-                    ]}>Solo</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                    style={[
-                        styles.tabButton, 
-                        { backgroundColor: colors.card },
-                        selectedTab === 'multy' && { backgroundColor: colors.buttonBg }
-                    ]}
-                    onPress={() => setSelectedTab('multy')}
-                >
-                    <Text style={[
-                        styles.tabButtonText, 
-                        { color: colors.textSecondary },
-                        selectedTab === 'multy' && { color: colors.buttonText }
-                    ]}>Multy</Text>
-                </TouchableOpacity>
+        <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
+            {/* Обидві форми лишаються змонтованими, щоб введене не губилось при перемиканні */}
+            <View style={[styles.tab, selectedTab !== 'solo' && styles.hidden]}>
+                <SoloTab userList={users} onHasItemsChange={setSoloHasItems} header={header} />
             </View>
-
-            <View style={{ flex: 1, display: selectedTab === 'solo' ? 'flex' : 'none', marginTop: 10 }}>
-                <SoloTab userList={users} onHasDataChange={setSoloHasData} />
-            </View>
-            <View style={{ flex: 1, display: selectedTab === 'multy' ? 'flex' : 'none', marginTop: 10 }}>
-                <MultyTab userList={users} onHasDataChange={setMultyHasData} />
+            <View style={[styles.tab, selectedTab !== 'multy' && styles.hidden]}>
+                <MultyTab userList={users} onHasItemsChange={setMultyHasItems} header={header} />
             </View>
         </View>
     );
@@ -66,35 +121,50 @@ const AddScreen: React.FC = () => {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#F5F5F5',
-        paddingTop: 20,
     },
-    tabBar: {
+    // Бічний відступ дає сама форма (16)
+    header: {
+        paddingTop: 12,
+        marginBottom: 24,
+    },
+    title: {
+        fontFamily: 'NunitoSansExtraBold',
+        letterSpacing: 0.3,
+        marginHorizontal: 4,
+        marginBottom: 20,
+    },
+    modeSwitch: {
         flexDirection: 'row',
-        marginHorizontal: 16,
-        borderRadius: 8,
-        overflow: 'hidden',
-        backgroundColor: '#F5F5F5',
-        borderWidth: 1,
-        borderColor: '#E0E0E0',
+        padding: SWITCH_PADDING,
+        borderRadius: 999,
     },
-    tabButton: {
+    // Повзунок лежить під текстом сегментів і їде до вибраного
+    modeThumb: {
+        position: 'absolute',
+        top: SWITCH_PADDING,
+        bottom: SWITCH_PADDING,
+        left: SWITCH_PADDING,
+        borderRadius: 999,
+    },
+    modeButton: {
         flex: 1,
-        paddingVertical: 8,
+        minHeight: 44,
+        justifyContent: 'center',
         alignItems: 'center',
-        backgroundColor: '#fff',
     },
-    activeTabButton: {
-        backgroundColor: '#000',
+    modeText: {
+        fontFamily: 'NunitoSans',
+        letterSpacing: 0.3,
     },
-    tabButtonText: {
-        fontSize: 14,
-        color: '#666',
-        fontFamily: 'Montserrat',
+    modeTextSelected: {
+        fontFamily: 'NunitoSansBold',
+        letterSpacing: 0.3,
     },
-    activeTabButtonText: {
-        color: '#fff',
-        fontFamily: 'MontserratBold',
+    tab: {
+        flex: 1,
+    },
+    hidden: {
+        display: 'none',
     },
 });
 

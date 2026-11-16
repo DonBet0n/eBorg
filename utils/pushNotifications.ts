@@ -16,7 +16,7 @@ try {
       shouldSetBadge: false,
     }),
   });
-} catch (error) {
+} catch {
   devLog('Push notifications are not supported in Expo Go');
 }
 

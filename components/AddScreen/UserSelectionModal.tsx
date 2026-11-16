@@ -1,133 +1,143 @@
-import React from 'react';
-import { View, Text, TouchableOpacity, FlatList, Modal } from 'react-native';
-import { MaterialIcons } from '@expo/vector-icons';
+import React, { useMemo } from 'react';
+import { FlatList, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import Icon from '@/components/ui/Icon';
+import Avatar from '@/components/ui/Avatar';
 import { User } from '../../types/debt';
-import AddScreenStyles from '../../styles/AddScreenStyles';
 import { useAppTheme } from '../../contexts/ThemeContext';
+import BottomSheet from '../ui/BottomSheet';
+import { displayName } from './FormParts';
 
 interface UserSelectionModalProps {
     visible: boolean;
     onClose: () => void;
+    // Питання, на яке відповідає вибір: «Хто винен», «Хто платив», «Учасники»
+    title: string;
     userList: User[];
-    
-    // Mode
-    mode: 'solo' | 'multy' | 'split';
-    
-    // For Solo
-    selectedUserId?: string;
-    onSelectSolo?: (user: User) => void;
-    
-    receiverId?: string;
-    isUserParticipant?: (user: User) => boolean;
-    onSelectMulty?: (user: User, isParticipant: boolean, isReceiver: boolean) => void;
-
-    // For Split
-    isUserSplitSelected?: (user: User) => boolean;
-    onSelectSplit?: (user: User) => void;
+    // Поточний користувач іде першим у списку з позначкою «Ви»
+    currentUserId?: string;
+    // Кілька людей (прапорці, вікно закривається кнопкою) чи одна (вибір одразу закриває вікно)
+    multiple?: boolean;
+    isSelected: (user: User) => boolean;
+    onSelect: (user: User) => void;
+    // Коротка позначка під іменем, наприклад «платник»
+    getTag?: (user: User) => string | undefined;
 }
 
 const UserSelectionModal: React.FC<UserSelectionModalProps> = ({
     visible,
     onClose,
+    title,
     userList,
-    mode,
-    selectedUserId,
-    onSelectSolo,
-    receiverId,
-    isUserParticipant,
-    onSelectMulty,
-    isUserSplitSelected,
-    onSelectSplit
+    currentUserId,
+    multiple,
+    isSelected,
+    onSelect,
+    getTag,
 }) => {
-    const { colors } = useAppTheme();
+    const { colors, textScale } = useAppTheme();
+
+    const sortedUsers = useMemo(() => {
+        const me = userList.find(user => user.id === currentUserId);
+        return me ? [me, ...userList.filter(user => user.id !== currentUserId)] : userList;
+    }, [userList, currentUserId]);
+
+    const selectedCount = multiple ? sortedUsers.filter(isSelected).length : 0;
+    const divider = { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border };
 
     return (
-        <Modal
-            visible={visible}
-            animationType="fade"
-            transparent={true}
-            statusBarTranslucent={true}
-            onRequestClose={onClose}
-        >
-            <View style={AddScreenStyles.modalOverlay}>
-                <View style={[AddScreenStyles.modalContent, { backgroundColor: colors.background }]}>
-                    <FlatList
-                        data={userList}
-                        keyExtractor={(item) => item.id}
-                        renderItem={({ item }) => {
-                            if (mode === 'solo' && onSelectSolo) {
-                                const isSelected = selectedUserId === item.id;
-                                return (
-                                    <TouchableOpacity onPress={() => onSelectSolo(item)}>
-                                        <View style={[AddScreenStyles.modalUserItem, { borderBottomColor: colors.border }]}>
-                                            <View style={AddScreenStyles.modalUserItemRadioArea}>
-                                                <MaterialIcons
-                                                    name={isSelected ? "radio-button-checked" : "radio-button-unchecked"}
-                                                    size={24}
-                                                    color={isSelected ? colors.text : colors.iconSecondary}
-                                                />
-                                            </View>
-                                            <Text style={[AddScreenStyles.modalUserName, { color: colors.text }]}>{item.name}</Text>
-                                        </View>
-                                    </TouchableOpacity>
-                                );
-                            } else if (mode === 'multy' && onSelectMulty && isUserParticipant) {
-                                const isReceiver = receiverId === item.id;
-                                const isParticipant = isUserParticipant(item);
-                                
-                                return (
-                                    <View style={[AddScreenStyles.modalUserItem, { borderBottomColor: colors.border }]}>
-                                        <TouchableOpacity
-                                            style={AddScreenStyles.modalUserItemRadioArea}
-                                            onPress={() => onSelectMulty(item, isParticipant, !isReceiver)}
-                                        >
-                                            <MaterialIcons
-                                                name={isReceiver ? "radio-button-checked" : "radio-button-unchecked"}
-                                                size={24}
-                                                color={isReceiver ? colors.text : colors.iconSecondary}
-                                            />
-                                        </TouchableOpacity>
-                                        <Text style={[AddScreenStyles.modalUserName, { color: colors.text }]}>{item.name}</Text>
-                                        <TouchableOpacity
-                                            style={AddScreenStyles.modalUserItemCheckboxArea}
-                                            onPress={() => onSelectMulty(item, !isParticipant, isReceiver)}
-                                        >
-                                            <MaterialIcons
-                                                name={isParticipant ? "check-box" : "check-box-outline-blank"}
-                                                size={24}
-                                                color={isParticipant ? colors.positiveText : colors.iconSecondary}
-                                            />
-                                        </TouchableOpacity>
-                                    </View>
-                                );
-                            } else if (mode === 'split' && onSelectSplit && isUserSplitSelected) {
-                                const isSelected = isUserSplitSelected(item);
-                                return (
-                                    <View style={[AddScreenStyles.modalUserItem, { borderBottomColor: colors.border }]}>
-                                        <Text style={[AddScreenStyles.modalUserName, { color: colors.text }]}>{item.name}</Text>
-                                        <TouchableOpacity
-                                            style={AddScreenStyles.modalUserItemCheckboxArea}
-                                            onPress={() => onSelectSplit(item)}
-                                        >
-                                            <MaterialIcons
-                                                name={isSelected ? "check-box" : "check-box-outline-blank"}
-                                                size={24}
-                                                color={isSelected ? colors.positiveText : colors.iconSecondary}
-                                            />
-                                        </TouchableOpacity>
-                                    </View>
-                                );
-                            }
-                            return null;
-                        }}
-                    />
-                    <TouchableOpacity style={[AddScreenStyles.modalCloseButton, { backgroundColor: colors.buttonBg }]} onPress={onClose}>
-                        <Text style={[AddScreenStyles.modalCloseButtonText, { color: colors.buttonText }]}>ОК</Text>
-                    </TouchableOpacity>
-                </View>
-            </View>
-        </Modal>
+        <BottomSheet visible={visible} onClose={onClose} title={title}>
+            {sortedUsers.length === 0 ? (
+                <Text style={[styles.empty, { color: colors.textSecondary, fontSize: 14 * textScale }]}>
+                    Список людей ще не завантажився. Перевірте з&apos;єднання і спробуйте ще раз.
+                </Text>
+            ) : (
+                <FlatList
+                    data={sortedUsers}
+                    keyExtractor={(item) => item.id}
+                    showsVerticalScrollIndicator={false}
+                    // Вибір живе поза списком, тому просимо перемалювати рядки, коли він змінюється
+                    extraData={isSelected}
+                    renderItem={({ item, index }) => {
+                        const selected = isSelected(item);
+                        const tags = [item.id === currentUserId ? 'Ви' : undefined, getTag?.(item)].filter(Boolean).join(' · ');
+                        const icon = multiple
+                            ? (selected ? 'check-box' : 'check-box-outline-blank')
+                            : (selected ? 'radio-button-checked' : 'radio-button-unchecked');
+
+                        return (
+                            <TouchableOpacity
+                                style={[styles.row, index > 0 && divider]}
+                                onPress={() => onSelect(item)}
+                                accessibilityRole={multiple ? 'checkbox' : 'radio'}
+                                accessibilityState={{ checked: selected }}
+                                accessibilityLabel={tags ? `${displayName(item)}, ${tags}` : displayName(item)}
+                            >
+                                <Avatar uri={item.avatar} name={item.name} size={40} />
+                                <View style={styles.rowText}>
+                                    <Text style={[styles.name, { color: colors.text, fontSize: 16 * textScale }]} numberOfLines={1}>
+                                        {displayName(item)}
+                                    </Text>
+                                    {!!tags && (
+                                        <Text style={[styles.tags, { color: colors.textSecondary, fontSize: 13 * textScale }]} numberOfLines={1}>
+                                            {tags}
+                                        </Text>
+                                    )}
+                                </View>
+                                <Icon name={icon} size={24} color={selected ? colors.text : colors.iconSecondary} />
+                            </TouchableOpacity>
+                        );
+                    }}
+                />
+            )}
+
+            {multiple && (
+                <TouchableOpacity style={[styles.doneButton, { backgroundColor: colors.buttonBg }]} onPress={onClose} accessibilityRole="button">
+                    <Text style={[styles.doneButtonText, { color: colors.buttonText, fontSize: 16 * textScale }]}>
+                        {selectedCount > 0 ? `Готово · ${selectedCount}` : 'Готово'}
+                    </Text>
+                </TouchableOpacity>
+            )}
+        </BottomSheet>
     );
 };
+
+const styles = StyleSheet.create({
+    empty: {
+        fontFamily: 'NunitoSans',
+        letterSpacing: 0.3,
+        textAlign: 'center',
+        paddingVertical: 24,
+    },
+    row: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+        minHeight: 64,
+        paddingVertical: 12,
+    },
+    rowText: {
+        flex: 1,
+    },
+    name: {
+        fontFamily: 'NunitoSansBold',
+        letterSpacing: 0.3,
+    },
+    tags: {
+        fontFamily: 'NunitoSans',
+        letterSpacing: 0.3,
+        marginTop: 2,
+    },
+    doneButton: {
+        minHeight: 52,
+        justifyContent: 'center',
+        alignItems: 'center',
+        borderRadius: 26,
+        marginTop: 16,
+    },
+    doneButtonText: {
+        fontFamily: 'NunitoSansBold',
+        letterSpacing: 0.3,
+    },
+});
 
 export default UserSelectionModal;

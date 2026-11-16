@@ -1,31 +1,39 @@
 import React from 'react';
 import { View, Text, Modal, StyleSheet, TouchableOpacity } from 'react-native';
+import Icon from '@/components/ui/Icon';
 import { formatAmount } from '../../utils/debtCalculations';
 import { useAppTheme } from '../../contexts/ThemeContext';
+import { useFormColors } from './FormParts';
 
 interface ConfirmDebtModalProps {
   visible: boolean;
   onClose: () => void;
   onConfirm: () => void;
-  debtInfo: {
-    fromUser: string;
-    toUser: string;
-    totalAmount: number;
-    itemsCount: number;
+  // Рядки «підпис — значення» і сума боргів, які буде створено; null, поки форма не заповнена
+  summary: {
+    rows: { label: string; value: string }[];
+    amountLabel: string;
+    amount: number;
   } | null;
   isSuccess?: boolean;
+  // Поки запис іде на сервер, кнопки вимкнені, щоб не створити борг двічі
+  isSubmitting?: boolean;
 }
 
 const ConfirmDebtModal: React.FC<ConfirmDebtModalProps> = ({
   visible,
   onClose,
   onConfirm,
-  debtInfo,
-  isSuccess
+  summary,
+  isSuccess,
+  isSubmitting
 }) => {
-  const { colors, currencySymbol } = useAppTheme();
+  const { colors, currencySymbol, textScale } = useAppTheme();
+  const { surface } = useFormColors();
 
-  if (!debtInfo) return null;
+  if (!summary) return null;
+
+  const amountText = `${formatAmount(summary.amount)} ${currencySymbol}`;
 
   return (
     <Modal
@@ -33,51 +41,65 @@ const ConfirmDebtModal: React.FC<ConfirmDebtModalProps> = ({
       animationType="fade"
       transparent={true}
       statusBarTranslucent={true}
-      onRequestClose={onClose}
+      onRequestClose={() => {
+        if (!isSubmitting) onClose();
+      }}
     >
       <View style={styles.modalOverlay}>
         <View style={[styles.modalContent, { backgroundColor: colors.background }]}>
           {isSuccess ? (
-            <>
-              <Text style={[styles.title, { color: colors.text }]}>Борг створено!</Text>
-              <View style={styles.infoContainer}>
-                <Text style={[styles.infoText, { color: colors.textSecondary }]}>
-                  Борг від <Text style={[styles.boldText, { color: colors.text }]}>{debtInfo.fromUser}</Text> до{' '}
-                  <Text style={[styles.boldText, { color: colors.text }]}>{debtInfo.toUser}</Text>
-                </Text>
-                <Text style={[styles.amountText, { color: colors.text }]}>
-                  Сума: {formatAmount(debtInfo.totalAmount)} {currencySymbol}
-                </Text>
-              </View>
-              <View style={styles.buttonContainer}>
-                <TouchableOpacity style={[styles.button, { backgroundColor: colors.buttonBg }]} onPress={onClose}>
-                  <Text style={[styles.buttonText, { color: colors.buttonText }]}>Закрити</Text>
-                </TouchableOpacity>
-              </View>
-            </>
+            <View style={styles.success}>
+              <Icon name="success" size={48} color={colors.positiveText} />
+              <Text style={[styles.title, styles.successTitle, { color: colors.text, fontSize: 20 * textScale }]}>Борг створено</Text>
+              <Text style={[styles.amount, { color: colors.text, fontSize: 24 * textScale }]}>{amountText}</Text>
+              <TouchableOpacity
+                style={[styles.button, styles.successButton, { backgroundColor: colors.buttonBg }]}
+                onPress={onClose}
+                accessibilityRole="button"
+              >
+                <Text style={[styles.buttonText, { color: colors.buttonText, fontSize: 16 * textScale }]}>Закрити</Text>
+              </TouchableOpacity>
+            </View>
           ) : (
             <>
-              <Text style={[styles.title, { color: colors.text }]}>Підтвердження створення боргу</Text>
-              <View style={styles.infoContainer}>
-                <Text style={[styles.infoText, { color: colors.textSecondary }]}>
-                  Від: <Text style={[styles.boldText, { color: colors.text }]}>{debtInfo.fromUser}</Text>
-                </Text>
-                <Text style={[styles.infoText, { color: colors.textSecondary }]}>
-                  Кому: <Text style={[styles.boldText, { color: colors.text }]}>{debtInfo.toUser}</Text>
-                </Text>
-                <Text style={[styles.infoText, { color: colors.textSecondary }]}>
-                  Кількість елементів: {debtInfo.itemsCount}
-                </Text>
-                <Text style={[styles.amountText, { color: colors.text }]}>
-                  Загальна сума: {formatAmount(debtInfo.totalAmount)} {currencySymbol}
-                </Text>
+              <Text style={[styles.title, { color: colors.text, fontSize: 20 * textScale }]}>Створити борг?</Text>
+
+              <View style={[styles.rows, { backgroundColor: surface }]}>
+                {summary.rows.map((row, index) => (
+                  <View
+                    key={row.label}
+                    style={[styles.row, index > 0 && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border }]}
+                  >
+                    <Text style={[styles.rowLabel, { color: colors.textSecondary, fontSize: 14 * textScale }]}>{row.label}</Text>
+                    <Text style={[styles.rowValue, { color: colors.text, fontSize: 15 * textScale }]} numberOfLines={2}>{row.value}</Text>
+                  </View>
+                ))}
               </View>
+
+              <View style={styles.amountRow}>
+                <Text style={[styles.rowLabel, { color: colors.textSecondary, fontSize: 15 * textScale }]}>{summary.amountLabel}</Text>
+                <Text style={[styles.amount, { color: colors.text, fontSize: 22 * textScale }]}>{amountText}</Text>
+              </View>
+
               <View style={styles.buttonContainer}>
-                <TouchableOpacity style={[styles.button, styles.cancelButton]} onPress={onClose}>
-                  <Text style={[styles.buttonText, { color: 'white' }]}>Скасувати</Text>
+                <TouchableOpacity
+                  style={[styles.button, { backgroundColor: surface }, isSubmitting && styles.buttonDisabled]}
+                  onPress={onClose}
+                  disabled={isSubmitting}
+                  accessibilityRole="button"
+                >
+                  <Text style={[styles.buttonText, { color: colors.text, fontSize: 16 * textScale }]}>Скасувати</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={[styles.button, { backgroundColor: colors.buttonBg }]} onPress={onConfirm}>
-                  <Text style={[styles.buttonText, { color: colors.buttonText }]}>Підтвердити</Text>
+                <TouchableOpacity
+                  style={[styles.button, { backgroundColor: colors.buttonBg }, isSubmitting && styles.buttonDisabled]}
+                  onPress={onConfirm}
+                  disabled={isSubmitting}
+                  accessibilityRole="button"
+                  accessibilityState={{ disabled: !!isSubmitting, busy: !!isSubmitting }}
+                >
+                  <Text style={[styles.buttonText, { color: colors.buttonText, fontSize: 16 * textScale }]}>
+                    {isSubmitting ? 'Створення…' : 'Створити'}
+                  </Text>
                 </TouchableOpacity>
               </View>
             </>
@@ -96,55 +118,82 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   modalContent: {
-    backgroundColor: 'white',
-    borderRadius: 12,
+    borderRadius: 24,
     padding: 20,
     width: '90%',
     maxWidth: 400,
   },
   title: {
-    fontSize: 20,
-    fontFamily: 'MontserratBold',
+    fontFamily: 'NunitoSansBold',
+    letterSpacing: 0.3,
     marginBottom: 16,
   },
-  infoContainer: {
+  rows: {
+    borderRadius: 16,
+    paddingHorizontal: 16,
+  },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 16,
+    minHeight: 48,
+    paddingVertical: 8,
+  },
+  rowLabel: {
+    fontFamily: 'NunitoSans',
+    letterSpacing: 0.3,
+  },
+  rowValue: {
+    flexShrink: 1,
+    textAlign: 'right',
+    fontFamily: 'NunitoSansBold',
+    letterSpacing: 0.3,
+  },
+  amountRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
+    gap: 16,
+    paddingHorizontal: 16,
+    marginTop: 16,
     marginBottom: 20,
   },
-  infoText: {
-    fontSize: 16,
-    fontFamily: 'Montserrat',
-    marginBottom: 8,
-  },
-  amountText: {
-    fontSize: 18,
-    fontFamily: 'MontserratBold',
-    marginTop: 8,
+  amount: {
+    fontFamily: 'NunitoSansExtraBold',
+    letterSpacing: 0.3,
+    fontVariant: ['tabular-nums'],
   },
   buttonContainer: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    gap: 12,
   },
   button: {
     flex: 1,
-    backgroundColor: '#000',
-    padding: 16,
-    borderRadius: 8,
+    minHeight: 52,
+    justifyContent: 'center',
     alignItems: 'center',
-    marginHorizontal: 8,
+    borderRadius: 26,
   },
-  cancelButton: {
-    backgroundColor: '#E53935',
-  },
-  successButton: {
-    backgroundColor: '#4CAF50', // Зелений колір для успішного створення
+  buttonDisabled: {
+    opacity: 0.5,
   },
   buttonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontFamily: 'MontserratBold',
+    fontFamily: 'NunitoSansBold',
+    letterSpacing: 0.3,
   },
-  boldText: {
-    fontFamily: 'MontserratBold',
+  success: {
+    alignItems: 'center',
+    paddingTop: 8,
+  },
+  successTitle: {
+    marginTop: 12,
+    marginBottom: 4,
+  },
+  successButton: {
+    flex: 0,
+    alignSelf: 'stretch',
+    marginTop: 20,
   },
 });
 

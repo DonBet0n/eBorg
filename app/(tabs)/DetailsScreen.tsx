@@ -1,41 +1,55 @@
-import React, { useState, useMemo } from 'react';
-import { View, FlatList, Modal, Text, ScrollView, TouchableOpacity, RefreshControl } from 'react-native';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { View, FlatList, Text, StyleSheet, RefreshControl, TouchableOpacity } from 'react-native';
+import { router, useLocalSearchParams } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import DebtCard from '../../components/DetailsScreen/DebtCard';
+import DebtSheet, { SheetView } from '../../components/DetailsScreen/DebtSheet';
+import { groupByDate } from '../../components/DetailsScreen/types';
+import Icon from '@/components/ui/Icon';
 import { useFirebase } from '../../contexts/FirebaseContext';
-import detailsStyles from '../../styles/DetailsStyles';
-import { DebtGroup, Transaction } from '../../types/debt';
-import { MaterialIcons } from '@expo/vector-icons';
-import { formatAmount, PAYMENT_TEXT, PAYMENT_TYPE } from '../../utils/debtCalculations';
-
 import { useAppTheme } from '../../contexts/ThemeContext';
+import { formatAmount, pluralize, PAYMENT_TEXT, PAYMENT_TYPE } from '../../utils/debtCalculations';
 
-interface GroupedTransaction {
-    date: Date;
-    items: Transaction[];
-    totalAmount: number;
-    isPayment: boolean;
-}
-
-interface SelectedDebt extends Omit<DebtGroup, 'items'> {
-    items: GroupedTransaction[];
+interface OpenSheet {
+  userId: string;
+  view: SheetView;
+  fromHistory: boolean;
 }
 
 const DetailsScreen = () => {
   const { user, debts, refreshDebts, createDebts, removeDebts, notifyUser } = useFirebase();
-  const { colors, detailsBlockSize, textScale, currencySymbol } = useAppTheme();
-  const [selectedDebt, setSelectedDebt] = useState<SelectedDebt | null>(null);
-  const [modalVisible, setModalVisible] = useState(false);
-  const [isRejectionMode, setIsRejectionMode] = useState(false);
-  const [selectedItems, setSelectedItems] = useState<string[]>([]);
-  const [expandedGroups, setExpandedGroups] = useState<{[key: string]: boolean}>({});
+  const { colors, isDark, textScale, currencySymbol } = useAppTheme();
+  const insets = useSafeAreaInsets();
+  const surface = isDark ? colors.card : colors.cardAlt;
   const [refreshing, setRefreshing] = useState(false);
+  const [sheet, setSheet] = useState<OpenSheet | null>(null);
+  // Головна передає userId, щоб одразу відкрити історію з потрібною людиною
+  const { userId: requestedUserId } = useLocalSearchParams<{ userId?: string }>();
 
-  const toggleGroup = (groupId: string) => {
-    setExpandedGroups(prev => ({
-      ...prev,
-      [groupId]: !prev[groupId]
-    }));
-  };
+  const people = useMemo(() => (debts || []).map(debt => ({
+    ...debt,
+    groups: groupByDate(debt.items || [], user?.id),
+  })), [debts, user?.id]);
+
+  useEffect(() => {
+    if (!requestedUserId || !debts) return;
+    if (debts.some(debt => debt.userId === requestedUserId)) {
+      setSheet({ userId: requestedUserId, view: 'history', fromHistory: true });
+    }
+    router.setParams({ userId: undefined });
+  }, [requestedUserId, debts]);
+
+  // Дані шторки беруться з живого списку, тож після оплати чи відхилення вона одразу оновлюється
+  const active = sheet ? people.find(person => person.userId === sheet.userId) : undefined;
+  // Під час згасання шторки показуємо останню людину, щоб вміст не зникав раніше за саму шторку
+  const lastActive = useRef(active);
+  if (active) lastActive.current = active;
+  const shown = active ?? lastActive.current;
+
+  useEffect(() => {
+    // Людину прибрали зі списку (відхилено всі записи) — закриваємо шторку
+    if (sheet && debts && !active) setSheet(null);
+  }, [sheet, debts, active]);
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -43,327 +57,177 @@ const DetailsScreen = () => {
     setRefreshing(false);
   };
 
-  const groupDebtsByDate = (items: Transaction[]): GroupedTransaction[] => {
-    if (!items || items.length === 0) return [];
+  const openSheet = (userId: string, view: SheetView) =>
+    setSheet({ userId, view, fromHistory: view === 'history' });
 
-    const grouped = items.reduce((acc: GroupedTransaction[], item: Transaction) => {
-      if (!item) return acc;
-
-      // Якщо це оплата боргу, додаємо як окремий елемент
-      if (item.isPayment) {
-        acc.push({
-          date: item.date,
-          items: [item],
-          totalAmount: item.amount,
-          isPayment: true
-        });
-        return acc;
-      }
-
-      // Групуємо інші транзакції за датою
-      const dateKey = new Date(item.date).toLocaleDateString();
-      const existingGroup = acc.find((group: GroupedTransaction) => 
-        !group.isPayment && 
-        new Date(group.date).toLocaleDateString() === dateKey
-      );
-
-      const itemAmount = item.fromUserId === user?.id ? -item.amount : item.amount;
-
-      if (existingGroup) {
-        existingGroup.items.push(item);
-        existingGroup.totalAmount += itemAmount;
-      } else {
-        acc.push({
-          date: item.date,
-          items: [item],
-          totalAmount: itemAmount,
-          isPayment: false
-        });
-      }
-      return acc;
-    }, []);
-
-    // Сортуємо за датою (найновіші спочатку)
-    return grouped.sort((a: GroupedTransaction, b: GroupedTransaction) => 
-      new Date(b.date).getTime() - new Date(a.date).getTime()
-    );
+  const handlePay = async (amount: number) => {
+    if (!user || !active) return;
+    // Оплата — зустрічний запис, що зменшує борг
+    await createDebts([{
+      fromUserId: active.totalAmount < 0 ? active.userId : user.id,
+      toUserId: active.totalAmount < 0 ? user.id : active.userId,
+      amount,
+      text: PAYMENT_TEXT,
+      type: PAYMENT_TYPE,
+    }]);
+    notifyUser(active.userId, PAYMENT_TEXT, `${user.name}: повернення ${formatAmount(amount)} ${currencySymbol}`);
   };
 
-  // Мемоізація групування боргів, щоб воно не викликалося при кожному кліку на розгортання
-  const groupedDebts = React.useMemo(() => {
-    return (debts || []).map(debt => ({
-      ...debt,
-      groupedItems: groupDebtsByDate(debt.items || [])
-    }));
-  }, [debts, user?.id]);
+  const totalBalance = people.reduce((sum, person) => sum + (person.totalAmount || 0), 0);
 
-  const handleDebtPress = (debt: any, rejection = false) => {
-    setSelectedDebt({
-      ...debt,
-      items: debt.groupedItems
-    });
-    setIsRejectionMode(rejection);
-    setSelectedItems([]);
-    // Розгорнуті групи прив'язані до номера групи, тому для іншої людини скидаємо їх
-    setExpandedGroups({});
-    setModalVisible(true);
-  };
+  const renderHeader = () => (
+    <View style={styles.header}>
+      <Text accessibilityRole="header" style={[styles.title, { color: colors.text, fontSize: 28 * textScale }]}>Деталі</Text>
+      {people.length > 0 && (
+        <Text style={[styles.subtitle, { color: colors.textSecondary, fontSize: 14 * textScale }]}>
+          {people.length} {pluralize(people.length, 'людина', 'людини', 'людей')} · загалом{' '}
+          <Text style={{ color: Math.abs(totalBalance) < 0.005 ? colors.textSecondary : totalBalance > 0 ? colors.positiveText : colors.negativeText }}>
+            {totalBalance > 0 ? '+' : ''}{formatAmount(totalBalance)} {currencySymbol}
+          </Text>
+        </Text>
+      )}
+    </View>
+  );
 
-  const handleItemSelect = (itemId: string) => {
-    setSelectedItems(prev => 
-      prev.includes(itemId) 
-        ? prev.filter(id => id !== itemId)
-        : [...prev, itemId]
-    );
-  };
-
-  const handleRejectItems = async () => {
-    try {
-      await removeDebts(selectedItems);
-      setModalVisible(false);
-      setSelectedItems([]);
-    } catch (error) {
-      console.error('Error rejecting items:', error);
-    }
-  };
-
-  const handlePayDebt = async (userId: string, amount: number) => {
-    try {
-      if (!user || !debts) return; // Add null check for debts
-
-      const currentDebt = debts.find(debt => debt.userId === userId);
-      if (!currentDebt) return;
-
-      // Створюємо інверсну транзакцію
-      // Якщо баланс від'ємний (ми винні), то транзакція буде від нас до користувача
-      // Якщо баланс додатній (нам винні), то транзакція буде від користувача до нас
-      await createDebts([{
-        fromUserId: currentDebt.totalAmount < 0 ? userId : user.id,  // Змінюємо напрямок
-        toUserId: currentDebt.totalAmount < 0 ? user.id : userId,    // Змінюємо напрямок
-        amount: amount,
-        text: PAYMENT_TEXT,
-        type: PAYMENT_TYPE,
-      }]);
-
-      notifyUser(userId, PAYMENT_TEXT, `${user.name} повернув вам ${amount} грн.`);
-    } catch (error) {
-      console.error('Error paying debt:', error);
-    }
-  };
-
-  const allItemIds = useMemo(() => (selectedDebt?.items || []).flatMap((group: GroupedTransaction) =>
-    group.items.map((item: Transaction) => item.id)
-  ), [selectedDebt]);
-  const isAllSelected = allItemIds.length > 0 && selectedItems.length === allItemIds.length;
-
-  const handleSelectAll = () => {
-    // Якщо всі елементи вже вибрані - очищаємо вибір
-    setSelectedItems(isAllSelected ? [] : allItemIds);
-  };
-
-  const blockPadding = detailsBlockSize === 'small' ? 4 : detailsBlockSize === 'large' ? 12 : 8;
-  const blockDateSize = (detailsBlockSize === 'small' ? 12 : detailsBlockSize === 'large' ? 16 : 14) * textScale;
-  const blockTotalSize = (detailsBlockSize === 'small' ? 16 : detailsBlockSize === 'large' ? 22 : 18) * textScale;
-  const blockItemSize = (detailsBlockSize === 'small' ? 14 : detailsBlockSize === 'large' ? 18 : 16) * textScale;
-
-  const renderModalItem = (group: GroupedTransaction, groupIndex: number) => {
-    if (group.isPayment) {
+  const renderEmpty = () => {
+    if (!debts) {
       return (
-        <View key={`payment-${groupIndex}`} style={detailsStyles.modalItem}>
-          <View style={[
-            detailsStyles.modalItemRow,
-            isRejectionMode && detailsStyles.modalSubItemWithCheckbox
-          ]}>
-            {isRejectionMode && (
-              <TouchableOpacity
-                onPress={() => handleItemSelect(group.items[0].id)}
-                style={detailsStyles.checkbox}
-              >
-                <MaterialIcons
-                  name={selectedItems.includes(group.items[0].id) ? "check-box" : "check-box-outline-blank"}
-                  size={24}
-                  color={selectedItems.includes(group.items[0].id) ? colors.positiveText : colors.iconSecondary}
-                />
-              </TouchableOpacity>
-            )}
-            <Text style={[detailsStyles.modalItemText, detailsStyles.paymentText, { color: colors.textSecondary }]}>
-              {PAYMENT_TEXT}
-            </Text>
-            <View style={detailsStyles.modalItemInfo}>
-              <Text style={[detailsStyles.modalItemAmount, detailsStyles.paymentAmount, { color: colors.text }]}>
-                {formatAmount(Math.abs(group.totalAmount))} {currencySymbol}
-              </Text>
-              <Text style={[detailsStyles.modalItemDate, { color: colors.textSecondary }]}>
-                {new Date(group.date).toLocaleDateString()}
-              </Text>
-            </View>
-          </View>
+        <View>
+          {[0, 1, 2].map(index => (
+            <View key={index} style={[styles.skeleton, { backgroundColor: surface }]} />
+          ))}
         </View>
       );
     }
-
-    // Повертаємо групу транзакцій
     return (
-      <View key={`group-${groupIndex}`} style={[detailsStyles.modalGroupContainer, { backgroundColor: colors.card, borderColor: colors.border }]}>
-        <TouchableOpacity 
-          style={[detailsStyles.modalGroupHeader, { backgroundColor: colors.cardAlt, padding: blockPadding }]}
-          onPress={() => toggleGroup(`${groupIndex}`)}
+      <View style={styles.empty}>
+        <View style={[styles.emptyIcon, { backgroundColor: surface }]}>
+          <Icon name="receipt" size={32} color={colors.iconSecondary} />
+        </View>
+        <Text style={[styles.emptyTitle, { color: colors.text, fontSize: 18 * textScale }]}>Боргів поки немає</Text>
+        <Text style={[styles.emptyText, { color: colors.textSecondary, fontSize: 14 * textScale }]}>
+          Запишіть перший борг або розділіть чек — тут з'явиться історія з кожною людиною.
+        </Text>
+        <TouchableOpacity
+          style={[styles.emptyButton, { backgroundColor: colors.buttonBg }]}
+          onPress={() => router.navigate('/(tabs)/AddScreen')}
+          accessibilityRole="button"
         >
-          <View style={detailsStyles.modalGroupLeft}>
-            <Text style={[detailsStyles.modalGroupDate, { color: colors.textSecondary, backgroundColor: 'transparent', fontSize: blockDateSize }]}>
-              {new Date(group.date).toLocaleDateString()}
-            </Text>
-            <MaterialIcons 
-              name={expandedGroups[`${groupIndex}`] ? "keyboard-arrow-up" : "keyboard-arrow-down"} 
-              size={24} 
-              color={colors.iconSecondary} 
-            />
-          </View>
-          <Text style={[
-            detailsStyles.modalGroupTotal,
-            { color: group.totalAmount >= 0 ? colors.positiveText : colors.negativeText, fontSize: blockTotalSize }
-          ]}>
-            {group.totalAmount > 0 ? '+' : ''}{formatAmount(group.totalAmount)} {currencySymbol}
-          </Text>
+          <Icon name="add" size={20} color={colors.buttonText} />
+          <Text style={[styles.emptyButtonText, { color: colors.buttonText }]}>Додати борг</Text>
         </TouchableOpacity>
-        {expandedGroups[`${groupIndex}`] && (
-          <View style={detailsStyles.modalSubItemsContainer}>
-            {group.items.map((item: Transaction, itemIndex: number) => (
-              <View key={`${groupIndex}-${itemIndex}`} style={[
-                detailsStyles.modalSubItem,
-                { borderTopColor: colors.border, padding: blockPadding },
-                isRejectionMode && detailsStyles.modalSubItemWithCheckbox
-              ]}>
-                {isRejectionMode && (
-                  <TouchableOpacity
-                    onPress={() => handleItemSelect(item.id)}
-                    style={detailsStyles.checkbox}
-                  >
-                    <MaterialIcons
-                      name={selectedItems.includes(item.id) ? "check-box" : "check-box-outline-blank"}
-                      size={24}
-                      color={selectedItems.includes(item.id) ? colors.positiveText : colors.iconSecondary}
-                    />
-                  </TouchableOpacity>
-                )}
-                <Text style={[detailsStyles.modalItemText, { color: colors.textSecondary, fontSize: blockItemSize }]} numberOfLines={1}>
-                  {item.text}
-                </Text>
-                <Text style={[
-                  detailsStyles.modalItemAmount,
-                  { color: item.fromUserId === user?.id ? colors.negativeText : colors.positiveText, fontSize: blockItemSize }
-                ]}>
-                  {item.fromUserId === user?.id ? '-' : '+'}
-                  {formatAmount(Math.abs(item.amount))} {currencySymbol}
-                </Text>
-              </View>
-            ))}
-          </View>
-        )}
       </View>
     );
   };
 
   return (
-    <View style={[detailsStyles.container, { backgroundColor: colors.background }]}>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
       <FlatList
-        data={groupedDebts}
-        keyExtractor={(item) => item.userId}
-
-        renderItem={({ item }) => {
-          return (
-            <View>
-              <DebtCard
-                id={item.userId}
-                fromUser={item.userName || 'Завантаження...'}
-                userAvatar={item.userAvatar}
-                items={item.groupedItems} // Передаємо вже згруповані дані
-                totalAmount={item.totalAmount || 0}
-                onPress={() => handleDebtPress(item)}
-                onPayPress={(amount) => handlePayDebt(item.userId, amount)}
-                onRejectPress={() => handleDebtPress(item, true)}
-              />
-            </View>
-          );
-        }}
+        data={people}
+        keyExtractor={item => item.userId}
+        contentContainerStyle={[styles.content, { paddingTop: insets.top + 12 }]}
+        ListHeaderComponent={renderHeader}
+        ListEmptyComponent={renderEmpty}
+        showsVerticalScrollIndicator={false}
+        renderItem={({ item }) => (
+          <DebtCard
+            userName={item.userName || 'Завантаження...'}
+            userAvatar={item.userAvatar}
+            groups={item.groups}
+            totalAmount={item.totalAmount || 0}
+            onPress={() => openSheet(item.userId, 'history')}
+            onPayPress={() => openSheet(item.userId, 'pay')}
+            onRejectPress={() => openSheet(item.userId, 'select')}
+          />
+        )}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.textSecondary} />
         }
       />
 
-      <Modal
-        visible={modalVisible}
-        animationType="fade"
-        transparent={true}
-        statusBarTranslucent={true}
-        onRequestClose={() => setModalVisible(false)}
-      >
-        <View style={detailsStyles.modalOverlay}>
-          <View style={[detailsStyles.modalContent, { backgroundColor: colors.background }]}>
-            <View style={detailsStyles.modalTitleContainer}>
-              <Text style={[detailsStyles.modalTitle, { color: colors.text }]}>Баланс</Text>
-              {isRejectionMode && (
-                <TouchableOpacity
-                  style={detailsStyles.selectAllContainer}
-                  onPress={handleSelectAll}
-                >
-                  <MaterialIcons
-                    name={isAllSelected ? "check-box" : "check-box-outline-blank"}
-                    size={24}
-                    color={isAllSelected ? colors.positiveText : colors.iconSecondary}
-                  />
-                  <Text style={[detailsStyles.selectAllText, { color: colors.textSecondary }]}>Вибрати всі</Text>
-                </TouchableOpacity>
-              )}
-              <Text style={[
-                detailsStyles.modalTotalAmount,
-                { color: (selectedDebt?.totalAmount ?? 0) === 0 ? colors.textSecondary : 
-                        (selectedDebt?.totalAmount ?? 0) > 0 ? colors.positiveText : colors.negativeText }
-              ]}>
-                {(selectedDebt?.totalAmount ?? 0) > 0 ? '+' : ''}
-                {formatAmount(selectedDebt?.totalAmount ?? 0)} {currencySymbol}
-              </Text>
-            </View>
-            
-            <ScrollView style={detailsStyles.modalScroll}>
-              {selectedDebt?.items ? (
-                selectedDebt.items.map((group: GroupedTransaction, groupIndex: number) => (
-                  renderModalItem(group, groupIndex)
-                ))
-              ) : (
-                <Text style={[detailsStyles.noDataText, { color: colors.textSecondary }]}>Немає транзакцій</Text>
-              )}
-            </ScrollView>
-
-            <View style={detailsStyles.modalFooter}>
-              {isRejectionMode ? (
-                <TouchableOpacity 
-                  style={[
-                    detailsStyles.modalCloseButton,
-                    { backgroundColor: colors.buttonBg },
-                    selectedItems.length === 0 && detailsStyles.modalButtonDisabled
-                  ]}
-                  onPress={handleRejectItems}
-                  disabled={selectedItems.length === 0}
-                >
-                  <Text style={[detailsStyles.modalCloseButtonText, { color: colors.buttonText }]}>
-                    Відхилити вибрані ({selectedItems.length})
-                  </Text>
-                </TouchableOpacity>
-              ) : (
-                <TouchableOpacity 
-                  style={[detailsStyles.modalCloseButton, { backgroundColor: colors.buttonBg }]} 
-                  onPress={() => setModalVisible(false)}
-                >
-                  <Text style={[detailsStyles.modalCloseButtonText, { color: colors.buttonText }]}>Закрити</Text>
-                </TouchableOpacity>
-              )}
-            </View>
-          </View>
-        </View>
-      </Modal>
+      <DebtSheet
+        visible={!!active}
+        view={sheet?.view ?? 'history'}
+        fromHistory={sheet?.fromHistory ?? false}
+        userName={shown?.userName || ''}
+        userAvatar={shown?.userAvatar}
+        groups={shown?.groups ?? []}
+        totalAmount={shown?.totalAmount ?? 0}
+        onChangeView={view => setSheet(prev => (prev ? { ...prev, view } : prev))}
+        onClose={() => setSheet(null)}
+        onPay={handlePay}
+        onReject={removeDebts}
+      />
     </View>
   );
 };
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+  },
+  // Запас знизу під кнопку «Додати», що виступає над навбаром
+  content: {
+    paddingHorizontal: 16,
+    paddingBottom: 32,
+    flexGrow: 1,
+  },
+  header: {
+    marginBottom: 16,
+  },
+  title: {
+    fontFamily: 'NunitoSansExtraBold',
+    letterSpacing: 0.3,
+  },
+  subtitle: {
+    fontFamily: 'NunitoSans',
+    letterSpacing: 0.3,
+    marginTop: 4,
+  },
+  skeleton: {
+    height: 200,
+    borderRadius: 20,
+    marginBottom: 12,
+  },
+  empty: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+    paddingBottom: 48,
+  },
+  emptyIcon: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  emptyTitle: {
+    fontFamily: 'NunitoSansBold',
+    letterSpacing: 0.3,
+    marginBottom: 8,
+  },
+  emptyText: {
+    fontFamily: 'NunitoSans',
+    letterSpacing: 0.3,
+    textAlign: 'center',
+    marginBottom: 24,
+  },
+  emptyButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    minHeight: 48,
+    paddingHorizontal: 20,
+    borderRadius: 12,
+  },
+  emptyButtonText: {
+    fontSize: 16,
+    fontFamily: 'NunitoSansBold',
+    letterSpacing: 0.3,
+  },
+});
 
 export default DetailsScreen;
