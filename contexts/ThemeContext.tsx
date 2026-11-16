@@ -13,8 +13,6 @@ interface ThemeContextProps {
   setTheme: (theme: ThemeType) => void;
   textScale: number;
   setTextScale: (val: number) => void;
-  accentColor: string;
-  setAccentColor: (val: string) => void;
   detailsBlockSize: DetailsBlockSizeType;
   setDetailsBlockSize: (val: DetailsBlockSizeType) => void;
   showDecimalsBalance: boolean;
@@ -34,7 +32,6 @@ export const AppThemeProvider = ({ children }: { children: React.ReactNode }) =>
   const deviceTheme = useDeviceColorScheme();
   const [theme, setThemeState] = useState<ThemeType>('system');
   const [textScale, setTextScaleState] = useState<number>(1.0);
-  const [accentColor, setAccentColorState] = useState<string>('default');
   const [detailsBlockSize, setDetailsBlockSizeState] = useState<DetailsBlockSizeType>('medium');
   const [showDecimalsBalance, setShowDecimalsBalanceState] = useState<boolean>(true);
   const [showDecimalsStatistics, setShowDecimalsStatisticsState] = useState<boolean>(true);
@@ -53,8 +50,8 @@ export const AppThemeProvider = ({ children }: { children: React.ReactNode }) =>
         const savedDensity = await AsyncStorage.getItem('@app_density');
         if (savedDensity) setTextScaleState(parseFloat(savedDensity));
         
-        const savedAccent = await AsyncStorage.getItem('@app_accent');
-        if (savedAccent) setAccentColorState(savedAccent);
+        // Вибір кольору прибрано: старе збережене значення більше не потрібне
+        AsyncStorage.removeItem('@app_accent').catch(() => {});
         
         const savedBlockSize = await AsyncStorage.getItem('@app_block_size');
         if (savedBlockSize) setDetailsBlockSizeState(savedBlockSize as DetailsBlockSizeType);
@@ -94,11 +91,6 @@ export const AppThemeProvider = ({ children }: { children: React.ReactNode }) =>
     persist('@app_density', val.toString());
   }, []);
 
-  const setAccentColor = useCallback((val: string) => {
-    setAccentColorState(val);
-    persist('@app_accent', val);
-  }, []);
-
   const setDetailsBlockSize = useCallback((val: DetailsBlockSizeType) => {
     setDetailsBlockSizeState(val);
     persist('@app_block_size', val);
@@ -127,33 +119,24 @@ export const AppThemeProvider = ({ children }: { children: React.ReactNode }) =>
   const resetToDefaults = useCallback(() => {
     setThemeState('system');
     setTextScaleState(1.0);
-    setAccentColorState('default');
     setDetailsBlockSizeState('medium');
     setShowDecimalsBalanceState(true);
     setShowDecimalsStatisticsState(true);
     setWrapStatisticsTextState(false);
     setCurrencySymbolState('грн');
     AsyncStorage.multiRemove([
-      '@app_theme', '@app_density', '@app_accent', '@app_block_size',
+      '@app_theme', '@app_density', '@app_block_size',
       '@app_decimals_balance', '@app_decimals_stat', '@app_wrap_stat_text', '@app_currency_symbol'
     ]).catch(() => {});
   }, []);
 
   const isDark = theme === 'system' ? deviceTheme === 'dark' : theme === 'dark';
 
-  const colors = useMemo<ThemeColors>(() => {
-    const baseColors = isDark ? Colors.dark : Colors.light;
-    return accentColor === 'default' ? baseColors : {
-      ...baseColors,
-      buttonBg: accentColor,
-      tabIconSelected: accentColor,
-    };
-  }, [isDark, accentColor]);
+  const colors: ThemeColors = isDark ? Colors.dark : Colors.light;
 
   const value = useMemo<ThemeContextProps>(() => ({
     theme, isDark, colors, setTheme,
     textScale, setTextScale,
-    accentColor, setAccentColor,
     detailsBlockSize, setDetailsBlockSize,
     showDecimalsBalance, setShowDecimalsBalance,
     showDecimalsStatistics, setShowDecimalsStatistics,
@@ -161,9 +144,9 @@ export const AppThemeProvider = ({ children }: { children: React.ReactNode }) =>
     currencySymbol, setCurrencySymbol,
     resetToDefaults
   }), [
-    theme, isDark, colors, textScale, accentColor, detailsBlockSize,
+    theme, isDark, colors, textScale, detailsBlockSize,
     showDecimalsBalance, showDecimalsStatistics, wrapStatisticsText, currencySymbol,
-    setTheme, setTextScale, setAccentColor, setDetailsBlockSize, setShowDecimalsBalance,
+    setTheme, setTextScale, setDetailsBlockSize, setShowDecimalsBalance,
     setShowDecimalsStatistics, setWrapStatisticsText, setCurrencySymbol, resetToDefaults,
   ]);
 

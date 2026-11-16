@@ -1,0 +1,23 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    // Список людей потрібен усім для вибору учасників; змінювати можна лише власний профіль
+    match /users/{userId} {
+      allow read: if signedIn();
+      allow create, update: if signedIn() && request.auth.uid == userId;
+    }
+
+    // Борг бачать, створюють і відхиляють лише його сторони; змінити записаний борг не можна
+    match /debts/{debtId} {
+      allow read, delete: if signedIn()
+        && (resource.data.fromUserId == request.auth.uid || resource.data.toUserId == request.auth.uid);
+      allow create: if signedIn()
+        && (request.resource.data.fromUserId == request.auth.uid || request.resource.data.toUserId == request.auth.uid);
+    }
+  }
+}

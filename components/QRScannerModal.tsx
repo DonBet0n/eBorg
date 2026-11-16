@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, Modal, TouchableOpacity, ScrollView, Dimensions, Linking } from 'react-native';
-import { Camera, CameraView } from 'expo-camera';
+import { View, Text, StyleSheet, Modal, TouchableOpacity, ScrollView, Dimensions, Linking, ActivityIndicator } from 'react-native';
+import { Camera } from 'expo-camera';
+import ReceiptCamera from './ReceiptCamera';
 import { WebView } from 'react-native-webview';
-import { MaterialIcons } from '@expo/vector-icons';
+import Icon from '@/components/ui/Icon';
 import { User, DebtItem } from '../types/debt';
 import { useAppTheme } from '../contexts/ThemeContext';
 
@@ -23,6 +24,8 @@ interface QRScannerModalProps {
 }
 
 const { height: WINDOW_HEIGHT } = Dimensions.get('window');
+const LOADING_STATUS = 'Завантаження сторінки...';
+const CAPTCHA_STATUS = 'Пройдіть капчу та натисніть "Пошук"';
 
 const QRScannerModal: React.FC<QRScannerModalProps> = ({ visible, onClose, users, onAddUserItem, onAddTotalItem }) => {
   const { colors, currencySymbol } = useAppTheme();
@@ -31,7 +34,7 @@ const QRScannerModal: React.FC<QRScannerModalProps> = ({ visible, onClose, users
   const [canAskAgain, setCanAskAgain] = useState(true);
   const [scannedUrl, setScannedUrl] = useState<string | null>(null);
   const [isParsing, setIsParsing] = useState(false);
-  const [parsingStatus, setParsingStatus] = useState('Завантаження сторінки...');
+  const [parsingStatus, setParsingStatus] = useState(LOADING_STATUS);
   const [parsedItems, setParsedItems] = useState<ParsedItem[]>([]);
   const [expectedSum, setExpectedSum] = useState<number | null>(null);
   const [sumWarning, setSumWarning] = useState<number | null>(null);
@@ -52,7 +55,7 @@ const QRScannerModal: React.FC<QRScannerModalProps> = ({ visible, onClose, users
       // Reset state on close
       setScannedUrl(null);
       setIsParsing(false);
-      setParsingStatus('Завантаження сторінки...');
+      setParsingStatus(LOADING_STATUS);
       setParsedItems([]);
       setSelectedItemToAssign(null);
       setExpectedSum(null);
@@ -60,23 +63,15 @@ const QRScannerModal: React.FC<QRScannerModalProps> = ({ visible, onClose, users
     }
   }, [visible]);
 
-  const handleBarCodeScanned = ({ type, data }: { type: string; data: string }) => {
+  // Камера сама перевіряє, що це QR-код податкової, і віддає лише посилання на чек
+  const handleReceipt = (data: string) => {
     if (scannedUrl || isParsing) return;
-    
-    // Check if it's a tax.gov.ua URL
-    if (data.includes('cabinet.tax.gov.ua/cashregs/check')) {
-      const match = data.match(/[?&]sm=([\d\.]+)/);
-      if (match) {
-        setExpectedSum(parseFloat(match[1]));
-      } else {
-        setExpectedSum(null);
-      }
-      
-      setScannedUrl(data);
-      setIsParsing(true);
-      setParsingStatus('Завантаження сторінки...');
-      setSumWarning(null);
-    }
+    const match = data.match(/[?&]sm=([\d\.]+)/);
+    setExpectedSum(match ? parseFloat(match[1]) : null);
+    setScannedUrl(data);
+    setIsParsing(true);
+    setParsingStatus(LOADING_STATUS);
+    setSumWarning(null);
   };
 
   const handleWebViewMessage = (event: any) => {
@@ -138,14 +133,27 @@ const QRScannerModal: React.FC<QRScannerModalProps> = ({ visible, onClose, users
     setParsedItems([]);
     setScannedUrl(null);
     setIsParsing(false);
-    setParsingStatus('Завантаження сторінки...');
+    setParsingStatus(LOADING_STATUS);
     setExpectedSum(null);
     setSumWarning(null);
   };
 
-  // Поки чекаємо відповіді на запит дозволу — нічого не показуємо
+  // Системна «Назад» повертає на крок назад, а не закриває все одразу
+  const handleBack = () => {
+    if (selectedItemToAssign) setSelectedItemToAssign(null);
+    else if (isParsing) handleClear();
+    else onClose();
+  };
+
+  // Поки чекаємо відповіді на запит дозволу — чорний екран камери з індикатором, без блимання
   if (hasPermission === null) {
-    return null;
+    return (
+      <Modal visible={visible} animationType="fade" statusBarTranslucent={true} onRequestClose={onClose}>
+        <View style={styles.permissionLoading}>
+          <ActivityIndicator color="#fff" />
+        </View>
+      </Modal>
+    );
   }
 
   if (!hasPermission) {
@@ -156,12 +164,12 @@ const QRScannerModal: React.FC<QRScannerModalProps> = ({ visible, onClose, users
             <View style={styles.header}>
               <Text style={[styles.headerTitle, { color: colors.text }]}>Сканер чеків</Text>
               <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
-                <MaterialIcons name="close" size={24} color={colors.text} />
+                <Icon name="close" size={24} color={colors.text} />
               </TouchableOpacity>
             </View>
             <View style={{ alignItems: 'center', paddingHorizontal: 24, paddingTop: 24, paddingBottom: 40 }}>
-              <MaterialIcons name="no-photography" size={48} color={colors.iconSecondary} />
-              <Text style={{ color: colors.text, fontFamily: 'Montserrat', fontSize: 15, textAlign: 'center', marginTop: 16, marginBottom: 24 }}>
+              <Icon name="no-photography" size={48} color={colors.iconSecondary} />
+              <Text style={{ color: colors.text, fontFamily: 'NunitoSans', fontSize: 15, textAlign: 'center', marginTop: 16, marginBottom: 24 }}>
                 Щоб сканувати QR-коди чеків, дозвольте застосунку доступ до камери.
               </Text>
               <TouchableOpacity
@@ -252,42 +260,42 @@ const QRScannerModal: React.FC<QRScannerModalProps> = ({ visible, onClose, users
     true;
   `;
 
+  const isCamera = !scannedUrl && parsedItems.length === 0;
+
+  if (isCamera) {
+    return (
+      <Modal visible={visible} animationType="fade" statusBarTranslucent={true} onRequestClose={onClose}>
+        <ReceiptCamera onClose={onClose} onReceipt={handleReceipt} />
+      </Modal>
+    );
+  }
+
   return (
-    <Modal visible={visible} animationType="slide" transparent statusBarTranslucent={true}>
+    <Modal visible={visible} animationType="slide" transparent statusBarTranslucent={true} onRequestClose={handleBack}>
       <View style={styles.overlay}>
         <View style={[styles.modalContent, { backgroundColor: colors.background, height: WINDOW_HEIGHT * 0.85 }]}>
           <View style={styles.header}>
             <Text style={[styles.headerTitle, { color: colors.text }]}>Сканер чеків</Text>
             <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
-              <MaterialIcons name="close" size={24} color={colors.text} />
+              <Icon name="close" size={24} color={colors.text} />
             </TouchableOpacity>
           </View>
 
           {isParsing && scannedUrl ? (
             <View style={{ flex: 1, backgroundColor: colors.background }}>
-              <View style={{ padding: 12, backgroundColor: colors.card, borderBottomWidth: 1, borderBottomColor: colors.border, alignItems: 'center' }}>
-                <Text style={{ color: colors.textSecondary, fontFamily: 'Montserrat', fontSize: 14 }}>Пройдіть капчу та натисніть "Пошук"</Text>
+              <View style={{ padding: 12, backgroundColor: colors.card, borderBottomWidth: 1, borderBottomColor: colors.border, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 8 }}>
+                {parsingStatus === LOADING_STATUS && <ActivityIndicator size="small" color={colors.textSecondary} />}
+                <Text style={{ color: colors.textSecondary, fontFamily: 'NunitoSans', fontSize: 14 }}>{parsingStatus}</Text>
               </View>
               <WebView
                 source={{ uri: scannedUrl }}
                 injectedJavaScript={jsToInject}
                 onMessage={handleWebViewMessage}
+                onLoadStart={() => setParsingStatus(LOADING_STATUS)}
+                onLoadEnd={() => setParsingStatus(CAPTCHA_STATUS)}
                 javaScriptEnabled={true}
                 showsVerticalScrollIndicator={false}
               />
-            </View>
-          ) : !scannedUrl && parsedItems.length === 0 ? (
-            <View style={styles.cameraContainer}>
-              <CameraView
-                style={styles.camera}
-                facing="back"
-                onBarcodeScanned={handleBarCodeScanned}
-              >
-                <View style={styles.cameraOverlay}>
-                  <View style={styles.scanBox} />
-                  <Text style={styles.scanText}>Наведіть на QR-код фіскального чека</Text>
-                </View>
-              </CameraView>
             </View>
           ) : (
             <View style={styles.splitContainer}>
@@ -300,10 +308,10 @@ const QRScannerModal: React.FC<QRScannerModalProps> = ({ visible, onClose, users
 
               {sumWarning !== null && Math.abs(sumWarning) > 0.05 && (
                 <View style={{ backgroundColor: colors.warningBg || '#FFF3CD', padding: 10, borderRadius: 8, marginBottom: 12, borderWidth: 1, borderColor: colors.warningBorder || '#FFEEBA' }}>
-                  <Text style={{ color: colors.warningText || '#856404', fontFamily: 'MontserratBold', fontSize: 13, textAlign: 'center' }}>
+                  <Text style={{ color: colors.warningText || '#856404', fontFamily: 'NunitoSansBold', fontSize: 13, textAlign: 'center' }}>
                     Увага: Контрольна сума не зійшлась на {Math.abs(sumWarning).toFixed(2)} {currencySymbol}.
                   </Text>
-                  <Text style={{ color: colors.warningText || '#856404', fontFamily: 'Montserrat', fontSize: 12, textAlign: 'center', marginTop: 4 }}>
+                  <Text style={{ color: colors.warningText || '#856404', fontFamily: 'NunitoSans', fontSize: 12, textAlign: 'center', marginTop: 4 }}>
                     Перевірте список, можливо деякі товари не розпізнались.
                   </Text>
                 </View>
@@ -311,7 +319,7 @@ const QRScannerModal: React.FC<QRScannerModalProps> = ({ visible, onClose, users
 
               {parsedItems.length === 0 ? (
                 <View style={styles.emptyContainer}>
-                  <MaterialIcons name="receipt" size={64} color={colors.border} />
+                  <Icon name="receipt" size={64} color={colors.border} />
                   <Text style={[styles.emptyText, { color: colors.textSecondary }]}>Всі позиції розподілено!</Text>
                   <TouchableOpacity 
                     style={[styles.doneBtn, { backgroundColor: colors.buttonBg }]} 
@@ -358,7 +366,7 @@ const QRScannerModal: React.FC<QRScannerModalProps> = ({ visible, onClose, users
                     style={[styles.userRow, { borderBottomColor: colors.border }]}
                     onPress={() => assignItemToUser('TOTAL')}
                   >
-                    <MaterialIcons name="group" size={24} color={colors.text} style={{ marginRight: 12 }} />
+                    <Icon name="group" size={24} color={colors.text} style={{ marginRight: 12 }} />
                     <Text style={[styles.userName, { color: colors.text }]}>Спільне (на всіх)</Text>
                   </TouchableOpacity>
                   
@@ -368,7 +376,7 @@ const QRScannerModal: React.FC<QRScannerModalProps> = ({ visible, onClose, users
                       style={[styles.userRow, { borderBottomColor: colors.border }]}
                       onPress={() => assignItemToUser(u)}
                     >
-                      <MaterialIcons name="person" size={24} color={colors.textSecondary} style={{ marginRight: 12 }} />
+                      <Icon name="person" size={24} color={colors.textSecondary} style={{ marginRight: 12 }} />
                       <Text style={[styles.userName, { color: colors.text }]}>{u.name} {u.secondName}</Text>
                     </TouchableOpacity>
                   ))}
@@ -410,39 +418,17 @@ const styles = StyleSheet.create({
   },
   headerTitle: {
     fontSize: 20,
-    fontFamily: 'MontserratBold',
+    fontFamily: 'NunitoSansBold',
+    letterSpacing: 0.3,
   },
   closeBtn: {
     padding: 4,
   },
-  cameraContainer: {
+  permissionLoading: {
     flex: 1,
     backgroundColor: '#000',
-  },
-  camera: {
-    flex: 1,
-  },
-  cameraOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.4)',
     justifyContent: 'center',
     alignItems: 'center',
-  },
-  scanBox: {
-    width: 250,
-    height: 250,
-    borderWidth: 2,
-    borderColor: '#fff',
-    borderRadius: 16,
-    backgroundColor: 'transparent',
-  },
-  scanText: {
-    color: '#fff',
-    fontSize: 16,
-    marginTop: 20,
-    fontFamily: 'Montserrat',
-    textAlign: 'center',
-    paddingHorizontal: 30,
   },
   loadingContainer: {
     flex: 1,
@@ -452,7 +438,8 @@ const styles = StyleSheet.create({
   loadingText: {
     marginTop: 16,
     fontSize: 16,
-    fontFamily: 'Montserrat',
+    fontFamily: 'NunitoSans',
+    letterSpacing: 0.3,
   },
   splitContainer: {
     flex: 1,
@@ -466,7 +453,8 @@ const styles = StyleSheet.create({
   },
   splitTitle: {
     fontSize: 18,
-    fontFamily: 'MontserratBold',
+    fontFamily: 'NunitoSansBold',
+    letterSpacing: 0.3,
   },
   clearBtn: {
     paddingHorizontal: 12,
@@ -475,7 +463,8 @@ const styles = StyleSheet.create({
   },
   clearBtnText: {
     fontSize: 12,
-    fontFamily: 'MontserratBold',
+    fontFamily: 'NunitoSansBold',
+    letterSpacing: 0.3,
   },
   itemsList: {
     flex: 1,
@@ -495,16 +484,19 @@ const styles = StyleSheet.create({
   },
   itemName: {
     fontSize: 16,
-    fontFamily: 'Montserrat',
+    fontFamily: 'NunitoSans',
+    letterSpacing: 0.3,
     marginBottom: 4,
   },
   itemQty: {
     fontSize: 13,
-    fontFamily: 'Montserrat',
+    fontFamily: 'NunitoSans',
+    letterSpacing: 0.3,
   },
   itemTotal: {
     fontSize: 18,
-    fontFamily: 'MontserratBold',
+    fontFamily: 'NunitoSansExtraBold',
+    letterSpacing: 0.3,
   },
   emptyContainer: {
     flex: 1,
@@ -513,7 +505,8 @@ const styles = StyleSheet.create({
   },
   emptyText: {
     fontSize: 18,
-    fontFamily: 'Montserrat',
+    fontFamily: 'NunitoSans',
+    letterSpacing: 0.3,
     marginTop: 16,
     marginBottom: 24,
   },
@@ -524,7 +517,8 @@ const styles = StyleSheet.create({
   },
   doneBtnText: {
     fontSize: 16,
-    fontFamily: 'MontserratBold',
+    fontFamily: 'NunitoSansBold',
+    letterSpacing: 0.3,
   },
   userSelectionOverlay: {
     position: 'absolute',
@@ -543,12 +537,14 @@ const styles = StyleSheet.create({
   },
   userSelectionTitle: {
     fontSize: 18,
-    fontFamily: 'MontserratBold',
+    fontFamily: 'NunitoSansBold',
+    letterSpacing: 0.3,
     marginBottom: 8,
   },
   userSelectionItem: {
     fontSize: 14,
-    fontFamily: 'Montserrat',
+    fontFamily: 'NunitoSans',
+    letterSpacing: 0.3,
     marginBottom: 16,
   },
   userList: {
@@ -562,7 +558,8 @@ const styles = StyleSheet.create({
   },
   userName: {
     fontSize: 16,
-    fontFamily: 'Montserrat',
+    fontFamily: 'NunitoSans',
+    letterSpacing: 0.3,
   },
   cancelBtn: {
     marginTop: 16,
@@ -573,7 +570,8 @@ const styles = StyleSheet.create({
   },
   cancelBtnText: {
     fontSize: 16,
-    fontFamily: 'Montserrat',
+    fontFamily: 'NunitoSans',
+    letterSpacing: 0.3,
   }
 });
 

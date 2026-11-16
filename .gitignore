@@ -44,6 +44,12 @@ contexts/firebaseConfig.ts
 contexts/google-services.json
 *firebase-adminsdk*.json
 
+# MCP: містить API-ключ
+.mcp.json
+.vscode/mcp.json
+.cursor/
+.continue/
+
 # Native: генеруються з app.json через expo prebuild
 /android
 /ios

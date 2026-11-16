@@ -1,512 +1,541 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, Modal, TouchableOpacity, StyleSheet, Alert, ActivityIndicator, ScrollView, Animated } from 'react-native';
-import { MaterialIcons } from '@expo/vector-icons';
+import React, { useState, useEffect } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, Alert, ActivityIndicator, ScrollView, Switch } from 'react-native';
+import Constants from 'expo-constants';
+import Icon, { IconName } from '@/components/ui/Icon';
 import Slider from '@react-native-community/slider';
-import ColorPicker from 'react-native-wheel-color-picker';
 import { useFirebase } from '../contexts/FirebaseContext';
-import { useAppTheme, ThemeType, DetailsBlockSizeType } from '../contexts/ThemeContext';
+import { useAppTheme, ThemeType } from '../contexts/ThemeContext';
+import { Colors, ThemeColors } from '../constants/Colors';
+import BottomSheet from './ui/BottomSheet';
 
 interface SettingsModalProps {
   visible: boolean;
   onClose: () => void;
 }
 
-const CustomSwitch = ({ value, onValueChange, isDark, colors }: { value: boolean, onValueChange: (v: boolean) => void, isDark: boolean, colors: any }) => {
-  const animValue = useRef(new Animated.Value(value ? 1 : 0)).current;
+// Позиції повзунка розміру тексту: він прилипає лише до них
+const TEXT_SCALES = [0.8, 0.9, 1, 1.1, 1.2, 1.3];
 
-  useEffect(() => {
-    Animated.timing(animValue, {
-      toValue: value ? 1 : 0,
-      duration: 200,
-      useNativeDriver: false,
-    }).start();
-  }, [value]);
-
-  const translateX = animValue.interpolate({
-    inputRange: [0, 1],
-    outputRange: [2, 24]
-  });
-
-  const backgroundColor = animValue.interpolate({
-    inputRange: [0, 1],
-    outputRange: [isDark ? '#333333' : '#e0e0e0', colors.buttonBg]
-  });
-
-  const borderColor = animValue.interpolate({
-    inputRange: [0, 1],
-    outputRange: [isDark ? '#333333' : '#e0e0e0', isDark ? '#ffffff' : '#aaaaaa']
-  });
-
-  return (
-    <TouchableOpacity activeOpacity={0.8} onPress={() => onValueChange(!value)}>
-      <Animated.View style={{
-        width: 50,
-        height: 28,
-        borderRadius: 14,
-        backgroundColor,
-        borderWidth: 1.5,
-        borderColor,
-        justifyContent: 'center',
-      }}>
-        <Animated.View style={{
-          width: 20,
-          height: 20,
-          borderRadius: 10,
-          backgroundColor: '#ffffff',
-          transform: [{ translateX }],
-          shadowColor: '#000',
-          shadowOffset: { width: 0, height: 2 },
-          shadowOpacity: 0.2,
-          shadowRadius: 2,
-          elevation: 2,
-        }} />
-      </Animated.View>
-    </TouchableOpacity>
-  );
+// Кольори стану: увімкнений перемикач, є/немає з'єднання, скидання
+const TINTS = {
+  on: '#30D158',
+  danger: '#FF453A',
 };
 
+const THEMES: { value: ThemeType; label: string }[] = [
+  { value: 'system', label: 'Авто' },
+  { value: 'light', label: 'Світла' },
+  { value: 'dark', label: 'Темна' },
+];
+
+const nearestScaleIndex = (scale: number) =>
+  TEXT_SCALES.reduce((best, value, index) => Math.abs(value - scale) < Math.abs(TEXT_SCALES[best] - scale) ? index : best, 0);
+
+// Усі плитки-іконки однакові: кольором виділяється лише стан, а не розділ
+const IconTile = ({ icon, colors }: { icon: IconName; colors: ThemeColors }) => (
+  <View style={[styles.iconTile, { backgroundColor: colors.background }]}>
+    <Icon name={icon} size={18} color={colors.icon} />
+  </View>
+);
+
+// Мініатюра екрана в потрібній темі: шапка, рядок суми і два рядки списку
+const ThemeMockup = ({ palette }: { palette: ThemeColors }) => (
+  <View style={[styles.mockupPane, { backgroundColor: palette.background }]}>
+    <View style={[styles.mockupDot, { backgroundColor: palette.cardAlt }]} />
+    <View style={[styles.mockupBar, styles.mockupBarWide, { backgroundColor: palette.text }]} />
+    <View style={[styles.mockupBar, { backgroundColor: palette.cardAlt }]} />
+    <View style={[styles.mockupBar, { backgroundColor: palette.cardAlt }]} />
+  </View>
+);
+
+// Перемикач з кількох взаємовиключних варіантів
+function SegmentedControl<T extends string>({ options, value, onChange, colors }: { options: { value: T, label: string }[], value: T, onChange: (v: T) => void, colors: ThemeColors }) {
+  return (
+    <View style={[styles.segmented, { backgroundColor: colors.background }]}>
+      {options.map(option => {
+        const selected = option.value === value;
+        return (
+          <TouchableOpacity
+            key={option.value}
+            style={[styles.segment, selected && { backgroundColor: colors.text }]}
+            onPress={() => onChange(option.value)}
+            accessibilityRole="button"
+            accessibilityState={{ selected }}
+          >
+            <Text style={[selected ? styles.segmentTextSelected : styles.segmentText, { color: selected ? colors.background : colors.textSecondary }]}>
+              {option.label}
+            </Text>
+          </TouchableOpacity>
+        );
+      })}
+    </View>
+  );
+}
+
 const SettingsModal: React.FC<SettingsModalProps> = ({ visible, onClose }) => {
-  const { fullSync, isOnline, lastUpdate, debts, dataSource } = useFirebase();
-  const { 
+  const { fullSync, isOnline, lastUpdate } = useFirebase();
+  const {
     theme, setTheme, colors, isDark,
     textScale, setTextScale,
-    accentColor, setAccentColor,
-    detailsBlockSize, setDetailsBlockSize,
     showDecimalsBalance, setShowDecimalsBalance,
     showDecimalsStatistics, setShowDecimalsStatistics,
-    wrapStatisticsText, setWrapStatisticsText,
     currencySymbol, setCurrencySymbol,
     resetToDefaults
   } = useAppTheme();
   const [isSyncing, setIsSyncing] = useState(false);
-  const [localTextScale, setLocalTextScale] = useState(textScale);
-  const [isColorPickerVisible, setColorPickerVisible] = useState(false);
+  // Повзунку віддаємо лише збережену позицію: якщо оновлювати її під час руху, він смикається
+  const scaleIndex = nearestScaleIndex(textScale);
+  const [draftIndex, setDraftIndex] = useState(scaleIndex);
+  const previewScale = TEXT_SCALES[draftIndex];
 
   useEffect(() => {
-    setLocalTextScale(textScale);
-  }, [textScale]);
+    setDraftIndex(scaleIndex);
+  }, [scaleIndex]);
 
-  const totalRecords = debts ? debts.reduce((acc, group) => acc + group.items.length, 0) : 0;
+  const surface = isDark ? colors.card : colors.cardAlt;
+  const divider = { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border };
+  // Один перемикач керує копійками і в балансі, і в сумах записів
+  const showDecimals = showDecimalsBalance || showDecimalsStatistics;
+  const setShowDecimals = (value: boolean) => {
+    setShowDecimalsBalance(value);
+    setShowDecimalsStatistics(value);
+  };
 
-  const handleFullSync = () => {
+  const handleSync = async () => {
+    setIsSyncing(true);
+    await fullSync();
+    setIsSyncing(false);
+  };
+
+  const handleReset = () => {
     Alert.alert(
-      'Повна синхронізація',
-      'Ви впевнені, що хочете примусово завантажити всі дані безпосередньо з сервера? Це зігнорує локальний кеш і може зайняти деякий час.',
+      'Скинути налаштування?',
+      'Тема, розмір тексту та формат сум повернуться до стандартних. Борги не зміняться.',
       [
         { text: 'Скасувати', style: 'cancel' },
-        {
-          text: 'Оновити',
-          onPress: async () => {
-            setIsSyncing(true);
-            await fullSync();
-            setIsSyncing(false);
-          }
-        }
+        { text: 'Скинути', style: 'destructive', onPress: resetToDefaults },
       ]
     );
   };
 
-  const getDataSourceText = () => {
-    if (dataSource === 'server') return 'Сервер (Онлайн)';
-    if (dataSource === 'cache') return isOnline ? 'Локальний кеш (синхронізація...)' : 'Локальний кеш (Офлайн)';
-    return 'Очікування...';
-  };
+  const syncStatus = !isOnline
+    ? 'Немає з\'єднання'
+    : lastUpdate
+      ? `Оновлено ${lastUpdate.toLocaleDateString('uk-UA')} о ${lastUpdate.toLocaleTimeString('uk-UA', { hour: '2-digit', minute: '2-digit' })}`
+      : 'Ще не оновлювалось';
 
   return (
-    <Modal visible={visible} animationType="fade" transparent={true} statusBarTranslucent={true} onRequestClose={onClose}>
-      <View style={styles.overlay}>
-        <View style={[styles.modalContent, { backgroundColor: colors.background }]}>
-          <View style={styles.header}>
-            <Text style={[styles.title, { color: colors.text }]}>Налаштування</Text>
-            <TouchableOpacity onPress={onClose} style={styles.closeButton}>
-              <MaterialIcons name="close" size={24} color={colors.icon} />
-            </TouchableOpacity>
+    <BottomSheet visible={visible} onClose={onClose} title="Налаштування">
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
+        {/* Живий попередній перегляд: одразу видно, як зміни вплинуть на суми */}
+        <View style={[styles.preview, { backgroundColor: surface }]}>
+          <Text style={[styles.previewLabel, { color: colors.textSecondary }]}>Так виглядатиме баланс</Text>
+          <Text
+            style={[styles.previewAmount, { color: colors.text, fontSize: 40 * previewScale, lineHeight: 48 * previewScale }]}
+            numberOfLines={1}
+            adjustsFontSizeToFit
+          >
+            {showDecimals ? '1 250.50' : '1 250'}
+            <Text style={[styles.previewCurrency, { fontSize: 20 * previewScale }]}> {currencySymbol}</Text>
+          </Text>
+          <View style={[styles.previewChip, { backgroundColor: colors.positiveBg }]}>
+            <Text style={[styles.previewChipText, { color: colors.positiveText, fontSize: 13 * previewScale }]}>
+              + {showDecimals ? '120.00' : '120'} {currencySymbol} за сьогодні
+            </Text>
           </View>
+        </View>
 
-          <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 20 }}>
-            <View style={[styles.statsContainer, { backgroundColor: colors.cardAlt, borderColor: colors.border }]}>
-              <Text style={[styles.statsHeader, { color: colors.text }]}>Оформлення</Text>
-              <View style={styles.themeButtonsRow}>
-                {(['light', 'dark', 'system'] as ThemeType[]).map((t) => (
-                  <TouchableOpacity
-                    key={t}
-                    style={[
-                      styles.themeBtn,
-                      { borderColor: colors.border },
-                      theme === t && { backgroundColor: colors.buttonBg, borderColor: colors.buttonBg }
-                    ]}
-                    onPress={() => setTheme(t)}
-                  >
-                    <Text style={[
-                      styles.themeBtnText,
-                      { color: colors.textSecondary },
-                      theme === t && { color: colors.buttonText }
-                    ]}>
-                      {t === 'light' ? 'Світла' : t === 'dark' ? 'Темна' : 'Системна'}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
+        <Text style={[styles.sectionLabel, { color: colors.text }]}>Тема</Text>
+        <View style={styles.themeRow}>
+          {THEMES.map(option => {
+            const selected = theme === option.value;
+            return (
+              <TouchableOpacity
+                key={option.value}
+                style={styles.themeOption}
+                onPress={() => setTheme(option.value)}
+                activeOpacity={0.8}
+                accessibilityRole="radio"
+                accessibilityState={{ selected }}
+                accessibilityLabel={`Тема: ${option.label}`}
+              >
+                <View style={[styles.mockup, { borderColor: selected ? colors.text : colors.border, borderWidth: selected ? 2 : 1 }]}>
+                  {/* «Авто» — навпіл світла і темна */}
+                  {option.value !== 'dark' && <ThemeMockup palette={Colors.light} />}
+                  {option.value !== 'light' && <ThemeMockup palette={Colors.dark} />}
+                  {selected && (
+                    <View style={[styles.mockupCheck, { backgroundColor: colors.text }]}>
+                      <Icon name="check" size={12} color={colors.background} />
+                    </View>
+                  )}
+                </View>
+                <Text style={[selected ? styles.themeLabelSelected : styles.themeLabel, { color: selected ? colors.text : colors.textSecondary }]}>
+                  {option.label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
 
-              <Text style={[styles.settingSubLabel, { color: colors.textSecondary, marginTop: 16 }]}>Розмір тексту</Text>
-              <View style={styles.sliderContainer}>
-                <Text style={{ color: colors.textSecondary }}>А</Text>
-                <Slider
-                  style={{ flex: 1, marginHorizontal: 10 }}
-                  minimumValue={0.5}
-                  maximumValue={1.5}
-                  step={0.1}
-                  value={localTextScale}
-                  onValueChange={setLocalTextScale}
-                  onSlidingComplete={setTextScale}
-                  minimumTrackTintColor={colors.buttonBg}
-                  maximumTrackTintColor={colors.border}
-                  thumbTintColor={colors.buttonBg}
-                />
-                <Text style={{ color: colors.textSecondary, fontSize: 20 }}>А</Text>
-              </View>
-
-              <Text style={[styles.settingSubLabel, { color: colors.textSecondary, marginTop: 16 }]}>Акцентний колір</Text>
-              <View style={styles.colorRow}>
-                {[
-                  { name: 'default', color: '#000000' },
-                  { name: '#2196F3', color: '#2196F3' }, // Blue
-                  { name: '#4CAF50', color: '#4CAF50' }, // Green
-                  { name: '#9C27B0', color: '#9C27B0' }, // Purple
-                  { name: '#FF9800', color: '#FF9800' }, // Orange
-                ].map((c) => (
-                  <TouchableOpacity
-                    key={c.name}
-                    style={[
-                      styles.colorCircle,
-                      { backgroundColor: c.name === 'default' ? (theme === 'dark' ? '#fff' : '#000') : c.color },
-                      accentColor === c.name && styles.colorCircleActive
-                    ]}
-                    onPress={() => setAccentColor(c.name)}
+        <Text style={[styles.sectionLabel, { color: colors.text }]}>Текст</Text>
+        <View style={[styles.card, styles.block, { backgroundColor: surface }]}>
+          <View style={styles.blockHeader}>
+            <IconTile icon="text-size" colors={colors} />
+            <Text style={[styles.rowLabel, { color: colors.text }]}>Розмір тексту</Text>
+            <View style={[styles.valueChip, { backgroundColor: colors.background }]}>
+              <Text style={[styles.valueChipText, { color: colors.text }]}>{Math.round(previewScale * 100)}%</Text>
+            </View>
+          </View>
+          <View style={styles.sliderRow}>
+            <Text style={[styles.sliderLetterSmall, { color: colors.textSecondary }]}>А</Text>
+            <View style={styles.sliderTrack}>
+              <Slider
+                style={styles.slider}
+                minimumValue={0}
+                maximumValue={TEXT_SCALES.length - 1}
+                step={1}
+                value={scaleIndex}
+                onValueChange={setDraftIndex}
+                onSlidingComplete={index => setTextScale(TEXT_SCALES[Math.round(index)])}
+                minimumTrackTintColor={colors.text}
+                maximumTrackTintColor={colors.border}
+                thumbTintColor={colors.text}
+                accessibilityLabel="Розмір тексту"
+              />
+              <View style={styles.ticks} pointerEvents="none">
+                {TEXT_SCALES.map((scale, index) => (
+                  <View
+                    key={scale}
+                    style={[styles.tick, { backgroundColor: index <= draftIndex ? colors.text : colors.border }]}
                   />
                 ))}
               </View>
-              <View style={styles.customColorContainer}>
-                <Text style={{ color: colors.textSecondary, fontFamily: 'Montserrat', fontSize: 14 }}>Свій колір:</Text>
-                <TouchableOpacity 
-                  style={[styles.customColorInput, { backgroundColor: (!['default', '#2196F3', '#4CAF50', '#9C27B0', '#FF9800'].includes(accentColor) ? accentColor : colors.inputBg), borderColor: colors.border }]}
-                  onPress={() => setColorPickerVisible(true)}
-                >
-                  <Text style={{ color: (!['default', '#2196F3', '#4CAF50', '#9C27B0', '#FF9800'].includes(accentColor) ? '#fff' : colors.textSecondary), textAlign: 'center' }}>
-                    {!['default', '#2196F3', '#4CAF50', '#9C27B0', '#FF9800'].includes(accentColor) ? accentColor : 'Обрати...'}
-                  </Text>
-                </TouchableOpacity>
-              </View>
-
-              <Text style={[styles.settingSubLabel, { color: colors.textSecondary, marginTop: 16 }]}>Розмір карток у деталях</Text>
-              <View style={styles.themeButtonsRow}>
-                {(['small', 'medium', 'large'] as DetailsBlockSizeType[]).map((size) => (
-                  <TouchableOpacity
-                    key={size}
-                    style={[
-                      styles.themeBtn,
-                      { borderColor: colors.border },
-                      detailsBlockSize === size && { backgroundColor: colors.buttonBg, borderColor: colors.buttonBg }
-                    ]}
-                    onPress={() => setDetailsBlockSize(size)}
-                  >
-                    <Text style={[
-                      styles.themeBtnText,
-                      { color: colors.textSecondary },
-                      detailsBlockSize === size && { color: colors.buttonText }
-                    ]}>
-                      {size === 'small' ? 'Малий' : size === 'medium' ? 'Середній' : 'Великий'}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-              
-              <TouchableOpacity style={styles.resetButton} onPress={resetToDefaults}>
-                <MaterialIcons name="refresh" size={20} color="#F44336" />
-                <Text style={styles.resetButtonText}>Скинути налаштування</Text>
-              </TouchableOpacity>
             </View>
-
-            <View style={[styles.statsContainer, { backgroundColor: colors.cardAlt, borderColor: colors.border, marginTop: 16, paddingVertical: 12, paddingHorizontal: 16 }]}>
-              <Text style={[styles.statsHeader, { color: colors.text, fontSize: 18, marginBottom: 12 }]}>Головна</Text>
-              
-              <View style={[styles.statRow, { justifyContent: 'space-between', marginBottom: 10 }]}>
-                <Text style={[styles.statLabel, { color: colors.textSecondary, fontSize: 15, marginLeft: 0 }]}>Копійки (Загальний баланс)</Text>
-                <CustomSwitch
-                  value={showDecimalsBalance}
-                  onValueChange={setShowDecimalsBalance}
-                  isDark={isDark}
-                  colors={colors}
-                />
-              </View>
-              
-              <View style={[styles.statRow, { justifyContent: 'space-between', marginBottom: 10 }]}>
-                <Text style={[styles.statLabel, { color: colors.textSecondary, fontSize: 15, marginLeft: 0 }]}>Копійки (Статистика боргів)</Text>
-                <CustomSwitch
-                  value={showDecimalsStatistics}
-                  onValueChange={setShowDecimalsStatistics}
-                  isDark={isDark}
-                  colors={colors}
-                />
-              </View>
-
-              <View style={[styles.statRow, { justifyContent: 'space-between', marginBottom: 10 }]}>
-                <Text style={[styles.statLabel, { color: colors.textSecondary, fontSize: 15, marginLeft: 0 }]}>Авто-перенос сум в статистиці</Text>
-                <CustomSwitch
-                  value={wrapStatisticsText}
-                  onValueChange={setWrapStatisticsText}
-                  isDark={isDark}
-                  colors={colors}
-                />
-              </View>
-
-              <View style={[styles.statRow, { justifyContent: 'space-between', marginBottom: 0 }]}>
-                <Text style={[styles.statLabel, { color: colors.textSecondary, fontSize: 15, marginLeft: 0 }]}>Символ валюти (грн / ₴)</Text>
-                <CustomSwitch
-                  value={currencySymbol === '₴'}
-                  onValueChange={(val) => setCurrencySymbol(val ? '₴' : 'грн')}
-                  isDark={isDark}
-                  colors={colors}
-                />
-              </View>
-            </View>
-
-            <View style={[styles.statsContainer, { backgroundColor: colors.cardAlt, borderColor: colors.border }]}>
-            <Text style={[styles.statsHeader, { color: colors.text }]}>Стан Бази Даних</Text>
-            
-            <View style={styles.statRow}>
-              <MaterialIcons name={isOnline ? "wifi" : "wifi-off"} size={20} color={isOnline ? "#4CAF50" : "#F44336"} />
-              <Text style={[styles.statLabel, { color: colors.textSecondary }]}>Мережа:</Text>
-              <Text style={[styles.statValue, { color: isOnline ? "#4CAF50" : "#F44336" }]}>
-                {isOnline ? "Онлайн" : "Офлайн"}
-              </Text>
-            </View>
-
-            <View style={styles.statRow}>
-              <MaterialIcons name="storage" size={20} color="#2196F3" />
-              <Text style={[styles.statLabel, { color: colors.textSecondary }]}>Завантажено записів:</Text>
-              <Text style={[styles.statValue, { color: colors.text }]}>{totalRecords}</Text>
-            </View>
-            
-            <View style={styles.statRow}>
-              <MaterialIcons name="cloud-download" size={20} color="#00BCD4" />
-              <Text style={[styles.statLabel, { color: colors.textSecondary }]}>Джерело даних:</Text>
-              <Text style={[styles.statValue, { color: colors.text }]}>{getDataSourceText()}</Text>
-            </View>
-
-            <View style={styles.statRow}>
-              <MaterialIcons name="update" size={20} color="#FF9800" />
-              <Text style={[styles.statLabel, { color: colors.textSecondary }]}>Останнє оновлення:</Text>
-              <Text style={[styles.statValue, { color: colors.text }]}>
-                {lastUpdate ? `${lastUpdate.toLocaleDateString('uk-UA')} ${lastUpdate.toLocaleTimeString('uk-UA', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}` : 'Ніколи'}
-              </Text>
-            </View>
+            <Text style={[styles.sliderLetterLarge, { color: colors.textSecondary }]}>А</Text>
           </View>
-
-            <TouchableOpacity 
-              style={[styles.syncButton, isSyncing && styles.syncingButton]} 
-              onPress={handleFullSync}
-              disabled={isSyncing}
-            >
-              {isSyncing ? (
-                <ActivityIndicator color="white" size="small" />
-              ) : (
-                <>
-                  <MaterialIcons name="sync" size={24} color="white" />
-                  <Text style={styles.syncButtonText}>Повна синхронізація</Text>
-                </>
-              )}
-            </TouchableOpacity>
-          </ScrollView>
         </View>
 
-        <Modal visible={isColorPickerVisible} animationType="slide" transparent={true}>
-            <View style={styles.colorPickerOverlay}>
-                <View style={[styles.colorPickerModal, { backgroundColor: colors.card, borderColor: colors.border }]}>
-                    <Text style={[styles.statsHeader, { color: colors.text, marginBottom: 20 }]}>Виберіть колір</Text>
-                    <View style={{ height: 300, width: '100%' }}>
-                        <ColorPicker
-                            color={accentColor === 'default' ? '#000000' : accentColor}
-                            onColorChangeComplete={(color) => setAccentColor(color)}
-                            thumbSize={30}
-                            sliderSize={30}
-                            noSnap={true}
-                            row={false}
-                        />
-                    </View>
-                    <TouchableOpacity style={[styles.syncButton, { backgroundColor: colors.buttonBg, marginTop: 20 }]} onPress={() => setColorPickerVisible(false)}>
-                        <Text style={styles.syncButtonText}>Готово</Text>
-                    </TouchableOpacity>
-                </View>
+        <Text style={[styles.sectionLabel, { color: colors.text }]}>Суми</Text>
+        <View style={[styles.card, { backgroundColor: surface }]}>
+          <View style={styles.row}>
+            <IconTile icon="coins" colors={colors} />
+            <View style={styles.rowText}>
+              <Text style={[styles.rowLabel, { color: colors.text }]}>Копійки</Text>
+              <Text style={[styles.rowHint, { color: colors.textSecondary }]}>У балансі та в записах</Text>
             </View>
-        </Modal>
+            <Switch
+              value={showDecimals}
+              onValueChange={setShowDecimals}
+              trackColor={{ false: colors.border, true: TINTS.on }}
+              thumbColor="#fff"
+              accessibilityLabel="Показувати копійки"
+            />
+          </View>
 
-      </View>
-    </Modal>
+          <View style={[styles.row, divider]}>
+            <IconTile icon="currency" colors={colors} />
+            <Text style={[styles.rowLabel, { color: colors.text }]}>Валюта</Text>
+            <View style={styles.currencyControl}>
+              <SegmentedControl
+                options={[
+                  { value: 'грн', label: 'грн' },
+                  { value: '₴', label: '₴' },
+                ]}
+                value={currencySymbol === '₴' ? '₴' : 'грн'}
+                onChange={setCurrencySymbol}
+                colors={colors}
+              />
+            </View>
+          </View>
+        </View>
+
+        <Text style={[styles.sectionLabel, { color: colors.text }]}>Дані</Text>
+        <View style={[styles.card, { backgroundColor: surface }]}>
+          <TouchableOpacity
+            style={styles.row}
+            onPress={handleSync}
+            disabled={isSyncing || !isOnline}
+            accessibilityRole="button"
+            accessibilityState={{ disabled: isSyncing || !isOnline, busy: isSyncing }}
+          >
+            <IconTile icon={isOnline ? 'sync' : 'wifi-off'} colors={colors} />
+            <View style={styles.rowText}>
+              <Text style={[styles.rowLabel, { color: colors.text }]}>Оновити з сервера</Text>
+              <View style={styles.statusLine}>
+                <View style={[styles.statusDot, { backgroundColor: isOnline ? TINTS.on : TINTS.danger }]} />
+                <Text style={[styles.rowHint, { color: colors.textSecondary }]} numberOfLines={1}>{syncStatus}</Text>
+              </View>
+            </View>
+            {isSyncing
+              ? <ActivityIndicator color={colors.iconSecondary} size="small" />
+              : <Icon name="chevron-right" size={20} color={colors.iconSecondary} />}
+          </TouchableOpacity>
+        </View>
+
+        <TouchableOpacity
+          style={[styles.resetButton, { backgroundColor: TINTS.danger + '1A' }]}
+          onPress={handleReset}
+          accessibilityRole="button"
+        >
+          <Icon name="refresh" size={18} color={colors.negativeText} />
+          <Text style={[styles.resetText, { color: colors.negativeText }]}>Скинути налаштування</Text>
+        </TouchableOpacity>
+
+        <Text style={[styles.version, { color: colors.textSecondary }]}>
+          eBorg · версія {Constants.expoConfig?.version ?? ''}
+        </Text>
+      </ScrollView>
+    </BottomSheet>
   );
 };
 
 export default SettingsModal;
 
 const styles = StyleSheet.create({
-  overlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'flex-end',
+  scrollContent: {
+    paddingBottom: 8,
   },
-  modalContent: {
-    backgroundColor: 'white',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    padding: 20,
-    minHeight: '40%',
-    maxHeight: '90%',
-  },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+  preview: {
+    borderRadius: 24,
+    paddingVertical: 20,
+    paddingHorizontal: 20,
     alignItems: 'center',
-    marginBottom: 20,
   },
-  title: {
-    fontSize: 22,
-    fontFamily: 'MontserratBold',
+  previewLabel: {
+    fontSize: 13,
+    fontFamily: 'NunitoSans',
+    letterSpacing: 0.3,
+    marginBottom: 4,
   },
-  closeButton: {
-    padding: 5,
+  previewAmount: {
+    fontFamily: 'NunitoSansExtraBold',
+    letterSpacing: 0.3,
+    fontVariant: ['tabular-nums'],
   },
-  statsContainer: {
-    backgroundColor: '#F8F9FA',
-    borderRadius: 12,
-    padding: 16,
+  previewCurrency: {
+    fontFamily: 'NunitoSansBold',
+  },
+  previewChip: {
     marginTop: 10,
-    borderWidth: 1,
-    borderColor: '#E0E0E0',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
   },
-  statsHeader: {
-    fontSize: 16,
-    fontFamily: 'MontserratBold',
-    color: '#333',
-    marginBottom: 12,
+  previewChipText: {
+    fontFamily: 'NunitoSansBold',
+    letterSpacing: 0.3,
   },
-  statRow: {
+  sectionLabel: {
+    fontSize: 17,
+    fontFamily: 'NunitoSansBold',
+    letterSpacing: 0.3,
+    marginTop: 24,
+    marginBottom: 10,
+    marginLeft: 4,
+  },
+  themeRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  themeOption: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  mockup: {
+    width: '100%',
+    height: 92,
+    borderRadius: 18,
+    flexDirection: 'row',
+    overflow: 'hidden',
+  },
+  mockupPane: {
+    flex: 1,
+    paddingTop: 12,
+    paddingHorizontal: 10,
+    gap: 6,
+  },
+  mockupDot: {
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    marginBottom: 2,
+  },
+  mockupBar: {
+    height: 6,
+    borderRadius: 3,
+  },
+  mockupBarWide: {
+    width: '70%',
+    height: 8,
+    borderRadius: 4,
+  },
+  mockupCheck: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  themeLabel: {
+    marginTop: 8,
+    fontSize: 14,
+    fontFamily: 'NunitoSans',
+    letterSpacing: 0.3,
+  },
+  themeLabelSelected: {
+    marginTop: 8,
+    fontSize: 14,
+    fontFamily: 'NunitoSansBold',
+    letterSpacing: 0.3,
+  },
+  card: {
+    borderRadius: 24,
+    paddingHorizontal: 16,
+  },
+  block: {
+    paddingVertical: 16,
+  },
+  blockHeader: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 12,
     marginBottom: 8,
   },
-  statLabel: {
-    fontSize: 14,
-    fontFamily: 'Montserrat',
-    color: '#555',
-    marginLeft: 8,
-    flex: 1,
-  },
-  statValue: {
-    fontSize: 14,
-    fontFamily: 'MontserratBold',
-    color: '#222',
-  },
-  syncButton: {
-    backgroundColor: '#FF9800',
+  row: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    padding: 16,
+    gap: 12,
+    minHeight: 64,
+    paddingVertical: 10,
+  },
+  iconTile: {
+    width: 36,
+    height: 36,
     borderRadius: 12,
-    marginTop: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
-  syncingButton: {
-    opacity: 0.7,
+  rowText: {
+    flex: 1,
   },
-  syncButtonText: {
-    color: 'white',
-    fontFamily: 'MontserratBold',
+  rowLabel: {
+    flex: 1,
     fontSize: 16,
-    marginLeft: 10,
+    fontFamily: 'NunitoSansBold',
+    letterSpacing: 0.3,
   },
-  themeContainer: {
-    marginBottom: 20,
+  rowHint: {
+    fontSize: 13,
+    fontFamily: 'NunitoSans',
+    letterSpacing: 0.3,
+    marginTop: 2,
+    flexShrink: 1,
   },
-  themeButtonsRow: {
+  statusLine: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 6,
+  },
+  statusDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+    marginTop: 2,
+  },
+  valueChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
+  },
+  valueChipText: {
+    fontSize: 13,
+    fontFamily: 'NunitoSansBold',
+    letterSpacing: 0.3,
+    fontVariant: ['tabular-nums'],
+  },
+  segmented: {
+    flexDirection: 'row',
+    gap: 4,
+    padding: 4,
+    borderRadius: 999,
+  },
+  segment: {
+    flex: 1,
+    minHeight: 36,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderRadius: 999,
+  },
+  segmentText: {
+    fontFamily: 'NunitoSans',
+    letterSpacing: 0.3,
+    fontSize: 14,
+  },
+  segmentTextSelected: {
+    fontFamily: 'NunitoSansBold',
+    letterSpacing: 0.3,
+    fontSize: 14,
+  },
+  currencyControl: {
+    width: 120,
+  },
+  sliderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: 8,
   },
-  themeBtn: {
+  sliderTrack: {
     flex: 1,
-    paddingVertical: 10,
-    alignItems: 'center',
-    borderRadius: 8,
-    borderWidth: 1,
   },
-  themeBtnText: {
-    fontFamily: 'Montserrat',
-    fontSize: 14,
+  slider: {
+    height: 44,
   },
-  settingSubLabel: {
-    fontFamily: 'Montserrat',
-    fontSize: 14,
-    marginBottom: 8,
-  },
-  sliderContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  colorRow: {
+  // Бічний відступ дорівнює половині бігунка, щоб крапки стояли під його позиціями
+  ticks: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 8,
+    marginHorizontal: 14,
+    marginTop: -10,
   },
-  colorCircle: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    borderWidth: 2,
-    borderColor: 'transparent',
+  tick: {
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
   },
-  colorCircleActive: {
-    borderColor: '#757575',
+  sliderLetterSmall: {
+    fontFamily: 'NunitoSansBold',
+    fontSize: 13,
+    width: 20,
+    textAlign: 'center',
+  },
+  sliderLetterLarge: {
+    fontFamily: 'NunitoSansBold',
+    fontSize: 22,
+    width: 20,
+    textAlign: 'center',
   },
   resetButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 20,
-    paddingVertical: 10,
     gap: 8,
+    minHeight: 52,
+    borderRadius: 999,
+    marginTop: 24,
   },
-  resetButtonText: {
-    color: '#F44336',
-    fontFamily: 'MontserratBold',
-    fontSize: 16,
+  resetText: {
+    fontSize: 15,
+    fontFamily: 'NunitoSansBold',
+    letterSpacing: 0.3,
   },
-  customColorContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginTop: 8,
-    marginBottom: 8,
-  },
-  customColorInput: {
-    borderWidth: 1,
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    width: 120,
-    justifyContent: 'center',
-  },
-  colorPickerOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-  },
-  colorPickerModal: {
-    width: '100%',
-    padding: 20,
-    borderRadius: 16,
-    borderWidth: 1,
+  version: {
+    fontSize: 12,
+    fontFamily: 'NunitoSans',
+    letterSpacing: 0.3,
+    textAlign: 'center',
+    marginTop: 16,
   },
 });

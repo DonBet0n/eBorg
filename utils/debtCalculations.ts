@@ -33,6 +33,15 @@ export const formatCurrency = (amount: number): string => {
   return formatAmount(amount).toString();
 };
 
+// Ділить суму на частини без втрати копійок: 100 на 3 → 33.34, 33.33, 33.33. Більші частини йдуть першими.
+export const splitAmount = (amount: number, parts: number): number[] => {
+  if (parts <= 0) return [];
+  const kopecks = Math.round(amount * 100);
+  const base = Math.floor(kopecks / parts);
+  const remainder = kopecks - base * parts;
+  return Array.from({ length: parts }, (_, index) => (base + (index < remainder ? 1 : 0)) / 100);
+};
+
 // Опис, який отримують записи оплати. Старі записи (без поля `type`) розпізнаються саме за ним.
 export const PAYMENT_TEXT = 'Оплата боргу';
 export const PAYMENT_TYPE = 'payment';

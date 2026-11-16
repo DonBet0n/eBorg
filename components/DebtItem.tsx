@@ -1,8 +1,7 @@
 import React, { useRef, forwardRef, useImperativeHandle, useState } from 'react';
 import { StyleSheet, View, TextInput, TouchableOpacity, Text } from 'react-native';
-import { MaterialIcons } from '@expo/vector-icons';
+import Icon from '@/components/ui/Icon';
 import { useAppTheme } from '../contexts/ThemeContext';
-import Animated, { FadeIn, LinearTransition } from 'react-native-reanimated';
 
 export interface DebtItemComponentProps {
     id: string;
@@ -37,9 +36,12 @@ const DebtItemComponent = forwardRef<{ focusDescription: () => void }, DebtItemC
     const descriptionInputRef = useRef<TextInput>(null);
     const amountInputRef = useRef<TextInput>(null);
     const splitButtonRef = useRef<any>(null);
-    const { colors, textScale, currencySymbol } = useAppTheme();
+    const { colors, isDark, textScale, currencySymbol } = useAppTheme();
     const [isFocused, setIsFocused] = useState(false);
     const [isAmountFocused, setIsAmountFocused] = useState(false);
+    // Позиції лежать у картці: у світлій темі вона сіра, тому поля білі
+    const fieldColors = { backgroundColor: isDark ? colors.inputBg : colors.background, borderColor: colors.border };
+    const isAmountEmpty = num === '0' || num === '';
 
     useImperativeHandle(ref, () => ({
         focusDescription: () => {
@@ -49,8 +51,9 @@ const DebtItemComponent = forwardRef<{ focusDescription: () => void }, DebtItemC
         }
     }));
 
+    // Enter у полі опису одразу створює нову позицію; клавіатура лишається відкритою
     const handleDescriptionSubmit = () => {
-        amountInputRef.current?.focus();
+        onAdd();
     };
 
     const handleAmountSubmit = () => {
@@ -64,75 +67,63 @@ const DebtItemComponent = forwardRef<{ focusDescription: () => void }, DebtItemC
         const isLastItem = index === totalCount - 1;
 
         return (
-            <Animated.View
-                entering={FadeIn.duration(300)}
-                layout={LinearTransition.duration(200)}
-                style={{ paddingVertical: 0, marginBottom: isLastItem ? 16 : 0 }}
-            >
-                <View style={{ 
-                    flexDirection: 'row', 
-                    justifyContent: 'space-between', 
-                    alignItems: 'center', 
-                    paddingVertical: 8, 
-                    paddingHorizontal: 16, 
-                    backgroundColor: colors.inputBg,
-                    borderLeftWidth: 1,
-                    borderRightWidth: 1,
-                    borderTopWidth: isFirst ? 1 : 0,
-                    borderBottomWidth: 1,
-                    borderColor: colors.border,
-                    borderTopLeftRadius: isFirst ? 12 : 0,
-                    borderTopRightRadius: isFirst ? 12 : 0,
-                    borderBottomLeftRadius: isLastItem ? 12 : 0,
-                    borderBottomRightRadius: isLastItem ? 12 : 0,
-                }}>
-                    <Text style={{ flex: 1, color: colors.text, fontSize: 14 * textScale, fontFamily: 'Montserrat', paddingRight: 16 }} numberOfLines={2}>
-                        {text || "Без опису"}
+            <View>
+                <View style={[
+                    styles.viewRow,
+                    { backgroundColor: fieldColors.backgroundColor, borderTopColor: colors.border },
+                    isFirst && styles.viewRowFirst,
+                    isLastItem && styles.viewRowLast,
+                ]}>
+                    <Text style={[styles.viewText, { color: colors.text, fontSize: 14 * textScale }]} numberOfLines={2}>
+                        {text || 'Без опису'}
                     </Text>
-                    <Text style={{ color: colors.text, fontSize: 15 * textScale, fontFamily: 'MontserratBold' }}>
-                        {num === '0' || num === '' ? '0' : num} {currencySymbol}
+                    <Text style={[styles.viewAmount, { color: colors.text, fontSize: 15 * textScale }]}>
+                        {isAmountEmpty ? '0' : num} {currencySymbol}
                     </Text>
                 </View>
-            </Animated.View>
+            </View>
         );
     }
 
     return (
-        <Animated.View
-            entering={FadeIn.duration(300)}
-            layout={LinearTransition.duration(200)}
-        >
+        <View>
             <View style={styles.debtItemContainer}>
-                <View style={{ flex: 1, marginRight: 8, justifyContent: 'center' }}>
+                {/* Поле ховається, поки не у фокусі: поверх нього лежить текст, який обрізається трьома крапками */}
+                <View style={styles.descriptionField}>
                     <TextInput
                         ref={descriptionInputRef}
-                        style={[styles.debtItemTextInput, { marginRight: 0, backgroundColor: colors.inputBg, borderColor: colors.border, color: colors.text, fontSize: 16 * textScale, opacity: isFocused ? 1 : 0 }]}
+                        style={[styles.debtItemTextInput, fieldColors, { color: colors.text, fontSize: 16 * textScale, opacity: isFocused ? 1 : 0 }]}
                         value={text}
-                        placeholder="Опис боргу"
+                        placeholder="Опис"
                         placeholderTextColor={colors.textSecondary}
                         onChangeText={onTextChange}
                         onSubmitEditing={handleDescriptionSubmit}
+                        submitBehavior="submit"
+                        returnKeyType="next"
                         onFocus={() => setIsFocused(true)}
                         onBlur={() => setIsFocused(false)}
                         pointerEvents={isFocused ? 'auto' : 'none'}
                         underlineColorAndroid="transparent"
+                        accessibilityLabel="Опис позиції"
                     />
                     {!isFocused && (
-                        <TouchableOpacity 
-                            style={[StyleSheet.absoluteFill, { backgroundColor: colors.inputBg, borderColor: colors.border, borderWidth: 1, borderRadius: 8, justifyContent: 'center', paddingHorizontal: 15 }]} 
+                        <TouchableOpacity
+                            style={[StyleSheet.absoluteFill, styles.fieldOverlay, styles.descriptionOverlay, fieldColors]}
                             onPress={() => descriptionInputRef.current?.focus()}
                             activeOpacity={1}
+                            accessibilityRole="button"
+                            accessibilityLabel={text ? `Опис позиції: ${text}` : 'Опис позиції'}
                         >
-                            <Text numberOfLines={1} ellipsizeMode="tail" style={{ color: text ? colors.text : colors.textSecondary, fontSize: 16 * textScale, fontFamily: 'Montserrat', includeFontPadding: false, textAlignVertical: 'center' }}>
-                                {text || "Опис боргу"}
+                            <Text numberOfLines={1} ellipsizeMode="tail" style={[styles.fieldOverlayText, { color: text ? colors.text : colors.textSecondary, fontSize: 16 * textScale }]}>
+                                {text || 'Опис'}
                             </Text>
                         </TouchableOpacity>
                     )}
                 </View>
-                <View style={{ width: 80, marginRight: 8, justifyContent: 'center' }}>
+                <View style={styles.amountField}>
                     <TextInput
                         ref={amountInputRef}
-                        style={[styles.debtItemNumberInput, { marginRight: 0, backgroundColor: colors.inputBg, borderColor: colors.border, color: colors.text, fontSize: 16 * textScale, opacity: isAmountFocused ? 1 : 0 }]}
+                        style={[styles.debtItemNumberInput, fieldColors, { color: colors.text, fontSize: 16 * textScale, opacity: isAmountFocused ? 1 : 0 }]}
                         value={num === '0' ? '' : num}
                         keyboardType="decimal-pad"
                         onChangeText={(value) => {
@@ -150,15 +141,25 @@ const DebtItemComponent = forwardRef<{ focusDescription: () => void }, DebtItemC
                         onFocus={() => setIsAmountFocused(true)}
                         onBlur={() => setIsAmountFocused(false)}
                         pointerEvents={isAmountFocused ? 'auto' : 'none'}
+                        underlineColorAndroid="transparent"
+                        accessibilityLabel="Сума позиції"
                     />
                     {!isAmountFocused && (
-                        <TouchableOpacity 
-                            style={[StyleSheet.absoluteFill, { backgroundColor: colors.inputBg, borderColor: colors.border, borderWidth: 1, borderRadius: 8, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 5 }]} 
+                        <TouchableOpacity
+                            style={[StyleSheet.absoluteFill, styles.fieldOverlay, styles.amountOverlay, fieldColors]}
                             onPress={() => amountInputRef.current?.focus()}
                             activeOpacity={1}
+                            accessibilityRole="button"
+                            accessibilityLabel={isAmountEmpty ? 'Сума позиції' : `Сума позиції: ${num} ${currencySymbol}`}
                         >
-                            <Text numberOfLines={1} style={{ color: (num === '0' || num === '') ? colors.textSecondary : colors.text, fontSize: 16 * textScale, fontFamily: 'Montserrat', includeFontPadding: false, textAlignVertical: 'center' }}>
-                                {(num === '0' || num === '') ? "Сума" : num}
+                            <Text
+                                numberOfLines={1}
+                                style={[
+                                    isAmountEmpty ? styles.fieldOverlayText : styles.amountOverlayText,
+                                    { color: isAmountEmpty ? colors.textSecondary : colors.text, fontSize: 16 * textScale },
+                                ]}
+                            >
+                                {isAmountEmpty ? 'Сума' : num}
                             </Text>
                         </TouchableOpacity>
                     )}
@@ -172,27 +173,30 @@ const DebtItemComponent = forwardRef<{ focusDescription: () => void }, DebtItemC
                                     onSplit(pageX, pageY, width, height);
                                 });
                             }}
-                            style={[styles.splitButton, { backgroundColor: colors.inputBg, borderColor: colors.border }]}
+                            style={styles.iconButton}
+                            accessibilityRole="button"
+                            accessibilityLabel="Розділити або помножити позицію"
                         >
-                            <MaterialIcons name="more-vert" size={20} color={colors.icon} />
+                            <Icon name="more-vert" size={20} color={colors.icon} />
                         </TouchableOpacity>
                     )}
                     <TouchableOpacity
                         onPress={onDelete}
-                        style={[styles.deleteButton, { backgroundColor: colors.inputBg, borderColor: colors.border }, isOnly && styles.deleteButtonDisabled]}
+                        style={[styles.iconButton, isOnly && styles.iconButtonDisabled]}
                         disabled={isOnly}
+                        accessibilityRole="button"
+                        accessibilityLabel="Видалити позицію"
+                        accessibilityState={{ disabled: isOnly }}
                     >
-                        <MaterialIcons
-                            name="delete"
-                            size={20}
-                            color={isOnly ? colors.iconSecondary : colors.icon}
-                        />
+                        <Icon name="delete" size={20} color={colors.iconSecondary} />
                     </TouchableOpacity>
                 </View>
             </View>
-        </Animated.View>
+        </View>
     );
 });
+
+DebtItemComponent.displayName = 'DebtItemComponent';
 
 const styles = StyleSheet.create({
     debtItemContainer: {
@@ -200,75 +204,106 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         marginBottom: 10,
     },
-    actionButtonsContainer: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 8, // Use gap instead of marginRight
+    descriptionField: {
+        flex: 1,
+        marginRight: 8,
+        justifyContent: 'center',
+    },
+    amountField: {
+        width: 88,
+        justifyContent: 'center',
     },
     debtItemTextInput: {
-        flex: 1,
-        height: 50,
-        backgroundColor: '#F5F5F5',
-        borderRadius: 8,
-        paddingHorizontal: 15,
-        paddingVertical: 0,
-        fontSize: 16,
-        marginRight: 8,
+        height: 48,
+        borderRadius: 12,
         borderWidth: 1,
-        borderColor: '#E0E0E0',
-        fontFamily: 'Montserrat',
+        paddingHorizontal: 12,
+        // Відступи замість порожнечі від центрування: Android (adjustPan) піднімає поле над клавіатурою
+        // лише до нижнього краю відступу, тож із paddingVertical: 0 низ поля ховався під нею
+        paddingVertical: 12,
+        fontFamily: 'NunitoSans',
+        letterSpacing: 0.3,
         includeFontPadding: false,
         textAlignVertical: 'center',
     },
     debtItemNumberInput: {
-        width: 80,
-        height: 50,
-        backgroundColor: '#F5F5F5',
-        borderRadius: 8,
-        paddingHorizontal: 5,
-        paddingVertical: 0,
-        fontSize: 16,
-        marginRight: 8,
+        height: 48,
+        borderRadius: 12,
         borderWidth: 1,
-        borderColor: '#E0E0E0',
+        paddingHorizontal: 4,
+        paddingVertical: 12,
         textAlign: 'center',
-        fontFamily: 'Montserrat',
+        fontFamily: 'NunitoSansBold',
+        letterSpacing: 0.3,
+        includeFontPadding: false,
+        textAlignVertical: 'center',
     },
-
-    splitButton: {
-        height: 50,
-        width: 50,
-        borderRadius: 8,
-        backgroundColor: '#F5F5F5',
+    fieldOverlay: {
         borderWidth: 1,
-        borderColor: '#E0E0E0',
+        borderRadius: 12,
+        justifyContent: 'center',
+    },
+    descriptionOverlay: {
+        paddingHorizontal: 12,
+    },
+    amountOverlay: {
+        alignItems: 'center',
+        paddingHorizontal: 4,
+    },
+    fieldOverlayText: {
+        fontFamily: 'NunitoSans',
+        letterSpacing: 0.3,
+        includeFontPadding: false,
+        textAlignVertical: 'center',
+    },
+    amountOverlayText: {
+        fontFamily: 'NunitoSansBold',
+        letterSpacing: 0.3,
+        includeFontPadding: false,
+        textAlignVertical: 'center',
+        fontVariant: ['tabular-nums'],
+    },
+    actionButtonsContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    iconButton: {
+        width: 40,
+        height: 48,
         alignItems: 'center',
         justifyContent: 'center',
     },
-    deleteButton: {
-        height: 50,
-        width: 50,
-        borderRadius: 8,
-        backgroundColor: '#F5F5F5',
-        borderWidth: 1,
-        borderColor: '#E0E0E0',
-        alignItems: 'center',
-        justifyContent: 'center',
+    iconButtonDisabled: {
+        opacity: 0.4,
     },
-    deleteButtonDisabled: {
-        opacity: 0.5,
-    },
-    addButton: {
-        alignSelf: 'center',
-        padding: 12,
-        backgroundColor: '#E0E0E0',
-        marginTop: 4,
-        marginBottom: 16,
-        borderRadius: 8,
-        borderWidth: 1,
-        borderColor: '#E0E0E0',
-        width: '100%',
+    // Режим перегляду: рядки зливаються в один список із заокругленими краями
+    viewRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
         alignItems: 'center',
+        paddingVertical: 10,
+        paddingHorizontal: 12,
+        borderTopWidth: StyleSheet.hairlineWidth,
+    },
+    viewRowFirst: {
+        borderTopWidth: 0,
+        borderTopLeftRadius: 12,
+        borderTopRightRadius: 12,
+    },
+    viewRowLast: {
+        borderBottomLeftRadius: 12,
+        borderBottomRightRadius: 12,
+    },
+    viewText: {
+        flex: 1,
+        paddingRight: 16,
+        fontFamily: 'NunitoSans',
+        letterSpacing: 0.3,
+    },
+    viewAmount: {
+        fontFamily: 'NunitoSansBold',
+        letterSpacing: 0.3,
+        fontVariant: ['tabular-nums'],
     },
 });
 

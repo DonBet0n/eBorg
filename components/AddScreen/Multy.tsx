@@ -1,35 +1,44 @@
-import React, { useState, useCallback, useRef, useEffect } from 'react';
-import { StyleSheet, Text, View, TouchableOpacity, ScrollView, Modal, Dimensions } from 'react-native';
-import { MaterialIcons } from '@expo/vector-icons';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
+import { Alert, Dimensions, Modal, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import Icon from '@/components/ui/Icon';
+import Avatar from '@/components/ui/Avatar';
 import DebtItemComponent from '../DebtItem';
 import { User, DebtItem } from '../../types/debt';
 import { useFirebase, NewDebt } from '../../contexts/FirebaseContext';
-
+import { useAppTheme } from '../../contexts/ThemeContext';
+import { formatAmount, splitAmount } from '../../utils/debtCalculations';
 import ConfirmDebtModal from './ConfirmDebtModal';
 import UserSelectionModal from './UserSelectionModal';
 import ErrorToast from '../ui/ErrorToast';
-import AddScreenStyles from '../../styles/AddScreenStyles';
-import { useAppTheme } from '../../contexts/ThemeContext';
 import QRScannerModal from '../QRScannerModal';
-import Animated, { LinearTransition } from 'react-native-reanimated';
+import {
+    AddItemButton, ClearFormButton, FormFooter, GroupIcon, ItemsHeader, PersonRow, SectionHeader,
+    displayName, formStyles, useFormColors,
+} from './FormParts';
 
 interface MultyTabProps {
     userList: User[];
-    onHasDataChange?: (hasData: boolean) => void;
+    onHasItemsChange?: (hasItems: boolean) => void;
+    // Шапка екрана прокручується разом з формою
+    header?: React.ReactNode;
 }
 
-const MultyTab: React.FC<MultyTabProps> = ({ userList, onHasDataChange }) => {
-    const { createDebts, notifyUser } = useFirebase();
+const MultyTab: React.FC<MultyTabProps> = ({ userList, onHasItemsChange, header }) => {
+    const { user: currentUser, createDebts, notifyUser } = useFirebase();
     const { colors, textScale, currencySymbol } = useAppTheme();
+    const { surface } = useFormColors();
     const [isUserListModalVisible, setUserListModalVisible] = useState(false);
+    // Що обираємо у вікні зі списком людей: платника чи учасників
+    const [userSelector, setUserSelector] = useState<'payer' | 'participants'>('payer');
     const [selectedUsersMulty, setSelectedUsersMulty] = useState<User[]>([]);
     const [totalItemsMulty, setTotalItemsMulty] = useState<DebtItem[]>([]);
     const [userItemsMulty, setUserItemsMulty] = useState<{ [userId: string]: DebtItem[] }>({});
-    const [isTotalDropdownOpen, setTotalDropdownOpen] = useState(false);
+    // Спільні витрати відкриті одразу: з них найчастіше починають
+    const [isTotalDropdownOpen, setTotalDropdownOpen] = useState(true);
     const [userDropdownOpen, setUserDropdownOpen] = useState<{ [key: string]: boolean }>({});
     const [debtReceiverUser, setDebtReceiverUser] = useState<User | null>(null);
     const [isScannerVisible, setIsScannerVisible] = useState(false);
-    
+
     // Стан для розділення боргу
     const [splitItemState, setSplitItemState] = useState<{userId: string, index: number, x: number, y: number, width: number, height: number} | null>(null);
     const [splitStep, setSplitStep] = useState<'menu' | 'users'>('menu');
@@ -37,19 +46,48 @@ const MultyTab: React.FC<MultyTabProps> = ({ userList, onHasDataChange }) => {
 
     const [confirmModalVisible, setConfirmModalVisible] = useState(false);
     const [isSuccess, setIsSuccess] = useState(false);
+    const [isSubmitting, setIsSubmitting] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [isViewMode, setIsViewMode] = useState(false);
 
+    const hasItems = totalItemsMulty.length > 0 ||
+                     Object.keys(userItemsMulty).some(k => userItemsMulty[k].length > 0);
+    const hasData = selectedUsersMulty.length > 0 || debtReceiverUser !== null || hasItems;
+
     useEffect(() => {
-        const hasData = selectedUsersMulty.length > 0 || 
-                        debtReceiverUser !== null || 
-                        totalItemsMulty.length > 0 || 
-                        Object.keys(userItemsMulty).some(k => userItemsMulty[k].length > 0);
-        onHasDataChange?.(hasData);
-    }, [selectedUsersMulty, debtReceiverUser, totalItemsMulty, userItemsMulty, onHasDataChange]);
+        onHasItemsChange?.(hasItems);
+    }, [hasItems, onHasItemsChange]);
 
     const itemRefs = useRef<Record<string, { focusDescription: () => void }>>({});
 
+    // --- Вибір людей ---
+    const openUserListModal = useCallback((selector: 'payer' | 'participants') => {
+        setUserSelector(selector);
+        setUserListModalVisible(true);
+    }, []);
+
+    const closeUserListModal = useCallback(() => {
+        setUserListModalVisible(false);
+    }, []);
+
+    const isUserParticipant = useCallback((user: User) => selectedUsersMulty.some(u => u.id === user.id), [selectedUsersMulty]);
+
+    const selectPayer = useCallback((user: User) => {
+        setDebtReceiverUser(user);
+        // Той, хто платив, зазвичай теж ділить чек, тому додаємо його до учасників; зняти можна в списку учасників
+        setSelectedUsersMulty(prevUsers => prevUsers.some(u => u.id === user.id) ? prevUsers : [...prevUsers, user]);
+        setUserListModalVisible(false);
+    }, []);
+
+    const toggleParticipant = useCallback((user: User) => {
+        setSelectedUsersMulty(prevUsers =>
+            prevUsers.some(u => u.id === user.id)
+                ? prevUsers.filter(u => u.id !== user.id)
+                : [...prevUsers, user]
+        );
+    }, []);
+
+    // --- Позиції ---
     const addTotalItemMulty = useCallback((newItemId: string) => {
         setTotalItemsMulty(prevItems => [...prevItems, { id: newItemId, text: '', num: '0' }]);
     }, []);
@@ -76,58 +114,6 @@ const MultyTab: React.FC<MultyTabProps> = ({ userList, onHasDataChange }) => {
             itemRefs.current[newItemId]?.focusDescription();
         }, 100);
     }, [addUserItemMulty]);
-
-    // Multy Tab функції
-    const openUserListModal = useCallback(() => {
-        setUserListModalVisible(true);
-    }, []);
-
-    const closeUserListModal = useCallback(() => {
-        setUserListModalVisible(false);
-    }, []);
-
-
-    const calculateSummaryForUser = useCallback((userId: string) => {
-        return (userItemsMulty[userId] || []).reduce((sum, item) => sum + (parseFloat(item.num) || 0), 0);
-    }, [userItemsMulty]);
-
-    const calculateDebtForUser = useCallback((user: User) => {
-        if (!debtReceiverUser) return 0;
-        
-        // Якщо це той самий користувач, повертаємо 0
-        if (user.id === debtReceiverUser.id) {
-            return 0;
-        }
-        
-        // Спільні витрати поділені на ВСІХ учасників (включаючи отримувача)
-        const totalSharedAmount = totalItemsMulty.reduce((sum, item) => sum + (parseFloat(item.num) || 0), 0);
-        const perUserShare = totalSharedAmount / selectedUsersMulty.length;
-        
-        // Персональні витрати користувача
-        const userPersonalAmount = calculateSummaryForUser(user.id);
-        
-        return parseFloat((perUserShare + userPersonalAmount).toFixed(2));
-    }, [totalItemsMulty, selectedUsersMulty, calculateSummaryForUser, debtReceiverUser]);
-
-    const calculateTotalMulty = useCallback(() => {
-        return totalItemsMulty.reduce((sum, item) => {
-            const num = parseFloat(item.num) || 0;
-            return sum + num;
-        }, 0);
-    }, [totalItemsMulty]);
-
-    const calculateGrandTotal = useCallback(() => {
-        const totalShared = calculateTotalMulty();
-        const totalPersonal = selectedUsersMulty.reduce((sum, user) => {
-            return sum + calculateSummaryForUser(user.id);
-        }, 0);
-        return totalShared + totalPersonal;
-    }, [calculateTotalMulty, selectedUsersMulty, calculateSummaryForUser]);
-
-    // Тепер perUserShare показує поділ на всіх учасників
-    const perUserShare = selectedUsersMulty.length > 0 
-        ? Number((calculateTotalMulty() / selectedUsersMulty.length).toFixed(2))
-        : 0;
 
     const updateDebtItemMultyTotal = useCallback((index: number, field: 'text' | 'num', value: string) => {
         setTotalItemsMulty(prevItems =>
@@ -168,6 +154,7 @@ const MultyTab: React.FC<MultyTabProps> = ({ userList, onHasDataChange }) => {
         });
     }, []);
 
+    // --- Розділення та множення позиції ---
     const handleSplitPress = useCallback((userId: string, index: number, x: number, y: number, width: number, height: number) => {
         setSplitItemState({ userId, index, x, y, width, height });
         setSplitStep('menu');
@@ -176,7 +163,7 @@ const MultyTab: React.FC<MultyTabProps> = ({ userList, onHasDataChange }) => {
 
     const handleMultiplierChange = useCallback((delta: number) => {
         if (!splitItemState) return;
-        
+
         setUserItemsMulty(prevUserItems => {
             const { userId, index } = splitItemState;
             const userItems = prevUserItems[userId] || [];
@@ -184,7 +171,7 @@ const MultyTab: React.FC<MultyTabProps> = ({ userList, onHasDataChange }) => {
             if (!item) return prevUserItems;
 
             let currentMultiplier = item.multiplier !== undefined ? item.multiplier : 1;
-            
+
             let newMultiplier = currentMultiplier + delta;
             if (currentMultiplier === 1 && delta === -1) {
                 newMultiplier = -2;
@@ -199,7 +186,7 @@ const MultyTab: React.FC<MultyTabProps> = ({ userList, onHasDataChange }) => {
 
             const baseAmount = parseFloat(baseNum) || 0;
             let newAmountNum = baseAmount;
-            
+
             if (newMultiplier > 0) {
                 newAmountNum = baseAmount * newMultiplier;
             } else if (newMultiplier < 0) {
@@ -209,19 +196,19 @@ const MultyTab: React.FC<MultyTabProps> = ({ userList, onHasDataChange }) => {
             const newAmount = Number(newAmountNum.toFixed(2)).toString();
 
             const updatedUserItems = [...userItems];
-            updatedUserItems[index] = { 
-                ...item, 
-                num: newAmount, 
-                multiplier: newMultiplier, 
-                baseNum 
+            updatedUserItems[index] = {
+                ...item,
+                num: newAmount,
+                multiplier: newMultiplier,
+                baseNum
             };
-            
+
             return { ...prevUserItems, [userId]: updatedUserItems };
         });
     }, [splitItemState]);
 
     const handleSplitUserSelection = useCallback((user: User) => {
-        setSplitSelectedUsers(prev => 
+        setSplitSelectedUsers(prev =>
             prev.some(u => u.id === user.id)
                 ? prev.filter(u => u.id !== user.id)
                 : [...prev, user]
@@ -242,21 +229,20 @@ const MultyTab: React.FC<MultyTabProps> = ({ userList, onHasDataChange }) => {
             return;
         }
 
-        const totalUsersCount = splitSelectedUsers.length + 1;
-        const newAmount = Number((parseFloat(originalItem.num) / totalUsersCount).toFixed(2)).toString();
+        const shares = splitAmount(parseFloat(originalItem.num), splitSelectedUsers.length + 1);
 
         // Оновити оригінальний запис
-        updateUserItemMulty(userId, index, 'num', newAmount);
+        updateUserItemMulty(userId, index, 'num', shares[0].toString());
 
         // Додати нові записи вибраним користувачам
-        splitSelectedUsers.forEach(splitUser => {
+        splitSelectedUsers.forEach((splitUser, splitIndex) => {
             setUserItemsMulty(prev => {
                 const userItems = prev[splitUser.id] || [];
                 // Якщо є тільки один пустий запис, ми його перезапишемо
                 const hasEmptyItem = userItems.length === 1 && userItems[0].text === '' && (userItems[0].num === '0' || userItems[0].num === '');
-                
-                const newItem = { id: String(Date.now() + Math.random()), text: originalItem.text, num: newAmount };
-                
+
+                const newItem = { id: String(Date.now() + Math.random()), text: originalItem.text, num: shares[splitIndex + 1].toString() };
+
                 let newItemsList;
                 if (hasEmptyItem) {
                     newItemsList = [newItem];
@@ -272,124 +258,214 @@ const MultyTab: React.FC<MultyTabProps> = ({ userList, onHasDataChange }) => {
         setSplitSelectedUsers([]);
     }, [splitItemState, splitSelectedUsers, userItemsMulty, updateUserItemMulty]);
 
-    const showError = (message: string) => {
-        setError(message);
-    };
+    // --- Підрахунки ---
+    const calculateSummaryForUser = useCallback((userId: string) => {
+        return (userItemsMulty[userId] || []).reduce((sum, item) => sum + (parseFloat(item.num) || 0), 0);
+    }, [userItemsMulty]);
 
-    const validateDebtItems = () => {
-        if (!debtReceiverUser || selectedUsersMulty.length === 0) {
-            showError('Виберіть отримувача та учасників');
-            return false;
-        }
-    
-        const hasEmptyAmount = totalItemsMulty.some(item => 
-            !item.num || Number(item.num) === 0
-        );
-    
-        // Перевіряємо тільки ті елементи, що існують
-        const hasEmptyUserAmount = Object.values(userItemsMulty).some(items =>
-            items && items.length > 0 && items.some(item => !item.num || Number(item.num) === 0)
-        );
-    
-        if (hasEmptyAmount || hasEmptyUserAmount) {
-            showError('Видаліть елементи з нульовою сумою');
-            return false;
-        }
-    
-        return true;
-    };
+    const calculateTotalMulty = useCallback(() => {
+        return totalItemsMulty.reduce((sum, item) => {
+            const num = parseFloat(item.num) || 0;
+            return sum + num;
+        }, 0);
+    }, [totalItemsMulty]);
 
-    const handleCreateDebtMulty = useCallback(async () => {
-        setError(null); // Clear previous error
-        if (!validateDebtItems()) return;
-        
-        setConfirmModalVisible(true);
-    }, [validateDebtItems]);
+    const calculateGrandTotal = useCallback(() => {
+        const totalShared = calculateTotalMulty();
+        const totalPersonal = selectedUsersMulty.reduce((sum, user) => {
+            return sum + calculateSummaryForUser(user.id);
+        }, 0);
+        return totalShared + totalPersonal;
+    }, [calculateTotalMulty, selectedUsersMulty, calculateSummaryForUser]);
 
-    const confirmDebtCreation = async () => {
-        setError(null); // Clear error on success
-        if (!debtReceiverUser || selectedUsersMulty.length === 0) return;
-        
-        const deptId = Date.now().toString();
-        try {
-            const newDebts: NewDebt[] = [];
+    // Спільні витрати діляться на ВСІХ учасників (включаючи платника, якщо він серед них).
+    // Зайві копійки дістаються боржникам, тому тут найменша частка — саме вона припадає на платника.
+    const perUserShare = selectedUsersMulty.length > 0
+        ? totalItemsMulty.reduce((sum, item) => sum + splitAmount(Number(item.num) || 0, selectedUsersMulty.length)[selectedUsersMulty.length - 1], 0)
+        : 0;
 
-            // 1. Створюємо окремі борги для кожного спільного товару
-            totalItemsMulty.forEach(totalItem => {
-                if (totalItem.num) {
-                    const itemAmount = Number(totalItem.num);
-                    // Розраховуємо частку для ВСІХ учасників
-                    const perUserShare = Number((itemAmount / selectedUsersMulty.length).toFixed(2));
+    // Записи, які буде створено. Суми на екрані рахуються з них же, тому збігаються зі створеними боргами.
+    const buildDebts = (deptId: string): NewDebt[] => {
+        if (!debtReceiverUser) return [];
+        const newDebts: NewDebt[] = [];
 
-                    // При створенні боргів пропускаємо отримувача
-                    selectedUsersMulty.forEach(user => {
-                        if (user.id === debtReceiverUser.id) return; // Пропускаємо отримувача
+        // 1. Окремі борги для кожної спільної позиції
+        // Платник сам собі не винен
+        const debtors = selectedUsersMulty.filter(user => user.id !== debtReceiverUser.id);
 
-                        newDebts.push({
-                            deptId: deptId,
-                            fromUserId: user.id,
-                            toUserId: debtReceiverUser.id,
-                            text: totalItem.text?.trim() 
-                                ? `${totalItem.text} (спільні витрати)` 
-                                : 'Без опису (спільні витрати)',
-                            amount: perUserShare,
-                        });
+        totalItemsMulty.forEach((totalItem, itemIndex) => {
+            if (totalItem.num) {
+                // Частка рахується на ВСІХ учасників; зайві копійки йдуть боржникам, щоб платник отримав повну суму
+                const shares = splitAmount(Number(totalItem.num), selectedUsersMulty.length);
+                // Від позиції до позиції зайва копійка дістається наступному боржнику
+                const offset = debtors.length > 0 ? itemIndex % debtors.length : 0;
+
+                [...debtors.slice(offset), ...debtors.slice(0, offset)].forEach((user, shareIndex) => {
+                    if (shares[shareIndex] <= 0) return;
+
+                    newDebts.push({
+                        deptId: deptId,
+                        fromUserId: user.id,
+                        toUserId: debtReceiverUser.id,
+                        text: totalItem.text?.trim()
+                            ? `${totalItem.text} (спільні витрати)`
+                            : 'Без опису (спільні витрати)',
+                        amount: shares[shareIndex],
+                    });
+                });
+            }
+        });
+
+        // 2. Окремі борги для особистих позицій учасників
+        selectedUsersMulty.forEach(user => {
+            // Особисті позиції платника боргом не стають
+            if (user.id === debtReceiverUser.id) return;
+
+            const userItems = userItemsMulty[user.id] || [];
+            userItems.forEach(item => {
+                if (item.num) {
+                    newDebts.push({
+                        deptId: deptId,
+                        fromUserId: user.id,
+                        toUserId: debtReceiverUser.id,
+                        text: item.text?.trim() || 'Без опису',
+                        amount: Number(Number(item.num).toFixed(2)),
                     });
                 }
             });
+        });
 
-            // 2. Створюємо окремі борги для індивідуальних товарів користувачів
-            selectedUsersMulty.forEach(user => {
-                // Пропускаємо створення індивідуальних боргів для отримувача
-                if (user.id === debtReceiverUser.id) return;
+        return newDebts;
+    };
 
-                const userItems = userItemsMulty[user.id] || [];
-                userItems.forEach(item => {
-                    if (item.num) {
-                        newDebts.push({
-                            deptId: deptId,
-                            fromUserId: user.id,
-                            toUserId: debtReceiverUser.id,
-                            text: item.text?.trim() || 'Без опису',
-                            amount: Number(Number(item.num).toFixed(2)),
-                        });
-                    }
-                });
-            });
+    const sumOwedByUser = (debts: NewDebt[]) => {
+        const owed: Record<string, number> = {};
+        debts.forEach(debt => {
+            owed[debt.fromUserId] = (owed[debt.fromUserId] || 0) + debt.amount;
+        });
+        return owed;
+    };
+
+    const previewDebts = buildDebts('');
+    const owedByUser = sumOwedByUser(previewDebts);
+    const owedTotal = previewDebts.reduce((sum, debt) => sum + debt.amount, 0);
+    const debtors = selectedUsersMulty.filter(u => (owedByUser[u.id] || 0) > 0);
+    const sharedTotal = calculateTotalMulty();
+    const grandTotal = calculateGrandTotal();
+    const itemsCount = totalItemsMulty.length +
+        selectedUsersMulty.reduce((acc, user) => acc + (userItemsMulty[user.id] || []).length, 0);
+
+    const resetForm = useCallback(() => {
+        setTotalItemsMulty([]);
+        setUserItemsMulty({});
+        setSelectedUsersMulty([]);
+        setDebtReceiverUser(null);
+    }, []);
+
+    const confirmClear = () => {
+        Alert.alert(
+            'Очистити форму?',
+            'Обраних людей і всі позиції буде прибрано.',
+            [
+                { text: 'Скасувати', style: 'cancel' },
+                { text: 'Очистити', style: 'destructive', onPress: resetForm },
+            ]
+        );
+    };
+
+    // --- Створення ---
+    const validateDebtItems = () => {
+        if (!debtReceiverUser || selectedUsersMulty.length === 0) {
+            setError('Оберіть, хто платив, і учасників');
+            return false;
+        }
+
+        // Чек записує той, хто платив: так кожен борг стосується автора запису
+        if (debtReceiverUser.id !== currentUser?.id) {
+            setError('Чек може записати лише той, хто платив');
+            return false;
+        }
+
+        // Сума має бути числом більше нуля: порожнє поле чи сама крапка не проходять
+        const isEmptyAmount = (item: DebtItem) => !(Number(item.num) > 0);
+
+        // Перевіряємо лише позиції учасників: позицій тих, кого прибрали зі списку, на екрані немає
+        const hasEmptyAmount = totalItemsMulty.some(isEmptyAmount) ||
+            selectedUsersMulty.some(user => (userItemsMulty[user.id] || []).some(isEmptyAmount));
+
+        if (hasEmptyAmount) {
+            setError('Вкажіть суму в кожній позиції або видаліть порожні');
+            return false;
+        }
+
+        if (previewDebts.length === 0) {
+            setError('Нікому нічого не нараховано: додайте позиції та учасників');
+            return false;
+        }
+
+        return true;
+    };
+
+    const handleCreateDebtMulty = () => {
+        setError(null); // Clear previous error
+        if (!validateDebtItems()) return;
+
+        setConfirmModalVisible(true);
+    };
+
+    const confirmDebtCreation = async () => {
+        setError(null);
+        if (!debtReceiverUser || selectedUsersMulty.length === 0 || isSubmitting) return;
+
+        setIsSubmitting(true);
+        try {
+            const newDebts = buildDebts(Date.now().toString());
 
             await createDebts(newDebts);
-            
+
             // Push-сповіщення: суми рахуємо з реально створених записів, щоб вони збігались з боргами.
             // notifyUser сам пропускає того, хто створює борг.
-            const owedByUser: Record<string, number> = {};
-            newDebts.forEach(debt => {
-                owedByUser[debt.fromUserId] = (owedByUser[debt.fromUserId] || 0) + debt.amount;
+            const owed = sumOwedByUser(newDebts);
+            const notified = selectedUsersMulty.filter(u => (owed[u.id] || 0) > 0);
+            notified.forEach(debtor => {
+                notifyUser(debtor.id, 'eBorg', `${debtReceiverUser.name}: ваш борг ${Number(owed[debtor.id].toFixed(2))} ${currencySymbol}`);
             });
-            const debtors = selectedUsersMulty.filter(u => (owedByUser[u.id] || 0) > 0);
-            debtors.forEach(debtor => {
-                notifyUser(debtor.id, 'eBorg', `Ви винні ${debtReceiverUser.name} ${Number(owedByUser[debtor.id].toFixed(2))} грн.`);
-            });
-            if (debtors.length > 0) {
-                const totalOwed = debtors.reduce((sum, debtor) => sum + owedByUser[debtor.id], 0);
-                const names = debtors.map(debtor => debtor.name).filter(Boolean).join(', ');
-                notifyUser(debtReceiverUser.id, 'eBorg', `Вам винні ${names} ${Number(totalOwed.toFixed(2))} грн.`);
+            if (notified.length > 0) {
+                const totalOwed = notified.reduce((sum, debtor) => sum + owed[debtor.id], 0);
+                const names = notified.map(debtor => debtor.name).filter(Boolean).join(', ');
+                notifyUser(debtReceiverUser.id, 'eBorg', `${names}: борг вам ${Number(totalOwed.toFixed(2))} ${currencySymbol}`);
             }
 
             setIsSuccess(true);
             setTimeout(() => {
                 setIsSuccess(false);
                 setConfirmModalVisible(false);
-                // Reset form
-                setTotalItemsMulty([]);
-                setUserItemsMulty({});
-                setSelectedUsersMulty([]);
-                setDebtReceiverUser(null);
+                resetForm();
             }, 2000);
 
         } catch (error) {
             console.error('Error creating multy debts:', error);
-            setError('Помилка при створенні боргу');
+            // Повідомлення про помилку живе на формі, тому вікно підтвердження закриваємо
+            setConfirmModalVisible(false);
+            setError('Не вдалося створити борг. Спробуйте ще раз');
+        } finally {
+            setIsSubmitting(false);
         }
+    };
+
+    // У режимі перегляду розгортаємо всі блоки з позиціями, щоб чек було видно цілком
+    const toggleViewMode = () => {
+        if (!isViewMode) {
+            if (totalItemsMulty.length > 0) setTotalDropdownOpen(true);
+            setUserDropdownOpen(prev => {
+                const next = { ...prev };
+                selectedUsersMulty.forEach(user => {
+                    if ((userItemsMulty[user.id] || []).length > 0) next[user.id] = true;
+                });
+                return next;
+            });
+        }
+        setIsViewMode(!isViewMode);
     };
 
     const toggleTotalDropdown = useCallback(() => {
@@ -400,88 +476,185 @@ const MultyTab: React.FC<MultyTabProps> = ({ userList, onHasDataChange }) => {
         setUserDropdownOpen(prev => ({ ...prev, [userId]: !prev[userId] }));
     }, []);
 
-    const handleUserSelectionChangeMulty = useCallback((user: User, isParticipant: boolean, isReceiver: boolean) => {
-        // Спочатку обробляємо receiver
-        if (isReceiver) {
-            setDebtReceiverUser(debtReceiverUser?.id === user.id ? null : user);
-        }
+    const money = (amount: number) => `${formatAmount(amount)} ${currencySymbol}`;
 
-        // Потім обробляємо участь, незалежно від того чи є користувач отримувачем
-        if (isParticipant) {
-            setSelectedUsersMulty(prevUsers => {
-                if (!prevUsers.some(u => u.id === user.id)) {
-                    return [...prevUsers, user];
-                }
-                return prevUsers;
-            });
-        } else {
-            setSelectedUsersMulty(prevUsers => 
-                prevUsers.filter(u => u.id !== user.id)
-            );
-        }
-    }, [debtReceiverUser]);
+    // З чого складається частка людини в чеку
+    const describeUserPart = (personal: number, shared: number) => {
+        if (personal > 0 && shared > 0) return `Особисті ${formatAmount(personal)} + спільні ${formatAmount(shared)}`;
+        if (personal > 0) return `Особисті ${formatAmount(personal)}`;
+        if (shared > 0) return `Частка спільних ${formatAmount(shared)}`;
+        return 'Немає позицій';
+    };
 
-    const isUserParticipant = useCallback((user: User) => selectedUsersMulty.some(u => u.id === user.id), [selectedUsersMulty]);
+    const renderEmptyHint = () => (
+        <Text style={[formStyles.hint, { color: colors.textSecondary, fontSize: 13 * textScale }]}>Немає позицій</Text>
+    );
 
     return (
-        <ScrollView 
-            style={styles.multyTabContainer}
-            contentContainerStyle={{ flexGrow: 1, paddingBottom: 0 }}
-        >
-
-            {/* Top Bar: User Selection and Grand Total */}
-            <View style={styles.multyTopBarContainer}>
-                <TouchableOpacity style={styles.multyUserSelectorContainer} onPress={openUserListModal}>
-                    <View style={[styles.multyUserButton, { backgroundColor: colors.inputBg, borderColor: colors.border }]}>
-                        <MaterialIcons name="add" size={24} color={colors.iconSecondary} />
-                    </View>
-                    <Text style={[styles.multyAllUsersText, { color: colors.text, fontSize: 16 * textScale }]} numberOfLines={1} ellipsizeMode="tail">
-                        {selectedUsersMulty.length > 0
-                            ? selectedUsersMulty.map(user => user.name).join(', ')
-                            : 'Всі користувачі'}
-                    </Text>
-                </TouchableOpacity>
-
-                <View style={{ flexDirection: 'row', alignItems: 'stretch' }}>
-                    <TouchableOpacity 
-                        style={{ backgroundColor: colors.buttonBg, alignItems: 'center', justifyContent: 'center', borderRadius: 12, width: 48, marginRight: 10 }}
-                        onPress={() => setIsScannerVisible(true)}
-                    >
-                        <MaterialIcons name="qr-code-scanner" size={24} color={colors.buttonText} />
-                    </TouchableOpacity>
-
-                    <TouchableOpacity 
-                        style={{ backgroundColor: isViewMode ? colors.buttonBg : colors.inputBg, borderColor: isViewMode ? colors.buttonBg : colors.border, borderWidth: isViewMode ? 0 : 1, alignItems: 'center', justifyContent: 'center', borderRadius: 12, width: 48, marginRight: 10 }}
-                        onPress={() => setIsViewMode(!isViewMode)}
-                    >
-                        <MaterialIcons name={isViewMode ? "visibility-off" : "visibility"} size={24} color={isViewMode ? colors.buttonText : colors.icon} />
-                    </TouchableOpacity>
-
-                    <View style={[styles.topGrandTotalIsland, { backgroundColor: colors.cardAlt, borderColor: colors.border }]}>
-                        <Text style={[styles.topGrandTotalText, { color: colors.text, fontSize: 20 * textScale }]}>{calculateGrandTotal().toFixed(2)}</Text>
-                        <Text style={[styles.topGrandTotalCurrency, { color: colors.textSecondary, fontSize: 16 * textScale }]}>{currencySymbol}</Text>
-                    </View>
+        <View style={formStyles.container}>
+            <ScrollView
+                contentContainerStyle={formStyles.content}
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={false}
+            >
+                {header}
+                {/* Хто платив і між ким ділимо */}
+                <View style={[formStyles.card, { backgroundColor: surface }]}>
+                    <PersonRow
+                        label="Хто платив"
+                        placeholder="Обрати людину"
+                        users={debtReceiverUser ? [debtReceiverUser] : []}
+                        onPress={() => openUserListModal('payer')}
+                    />
+                    <PersonRow
+                        label="Учасники"
+                        placeholder="Обрати, між ким ділити"
+                        users={selectedUsersMulty}
+                        multiple
+                        onPress={() => openUserListModal('participants')}
+                        divider
+                    />
                 </View>
-            </View>
 
+                {/* Що саме: спільне і особисте кожного */}
+                <ItemsHeader
+                    isViewMode={isViewMode}
+                    onToggleViewMode={toggleViewMode}
+                    onScan={() => setIsScannerVisible(true)}
+                />
 
+                <View style={[formStyles.card, formStyles.itemsCard, { backgroundColor: surface }]}>
+                    <SectionHeader
+                        leading={<GroupIcon />}
+                        title="Спільні витрати"
+                        subtitle={selectedUsersMulty.length > 0
+                            ? `Порівну на ${selectedUsersMulty.length} · по ${money(perUserShare)}`
+                            : 'Діляться порівну між учасниками'}
+                        amount={money(sharedTotal)}
+                        isOpen={isTotalDropdownOpen}
+                        onPress={toggleTotalDropdown}
+                    />
+                    {isTotalDropdownOpen && (
+                        <View style={formStyles.items}>
+                            {totalItemsMulty.map((item, index) => (
+                                <DebtItemComponent
+                                    ref={el => { if (el) itemRefs.current[item.id] = el; }}
+                                    key={item.id}
+                                    id={item.id}
+                                    text={item.text}
+                                    num={item.num.toString()}
+                                    onTextChange={(text) => updateDebtItemMultyTotal(index, 'text', text)}
+                                    onNumChange={(num) => updateDebtItemMultyTotal(index, 'num', num)}
+                                    onDelete={() => deleteTotalItemMulty(index)}
+                                    isLast={false}
+                                    isOnly={false} // <-- дозволяє видаляти всі поля
+                                    onAdd={handleAddTotalItem}
+                                    isViewMode={isViewMode}
+                                    index={index}
+                                    totalCount={totalItemsMulty.length}
+                                />
+                            ))}
+                            {isViewMode
+                                ? totalItemsMulty.length === 0 && renderEmptyHint()
+                                : <AddItemButton onPress={handleAddTotalItem} />}
+                        </View>
+                    )}
+                </View>
 
-            {/* User List Modal with Checkboxes for Multy */}
+                {selectedUsersMulty.length === 0 && (
+                    <Text style={[formStyles.hint, { color: colors.textSecondary, fontSize: 13 * textScale }]}>
+                        Оберіть учасників, і для кожного з&apos;явиться блок з особистими позиціями.
+                    </Text>
+                )}
+
+                {selectedUsersMulty.map((user) => {
+                    const isPayer = debtReceiverUser?.id === user.id;
+                    const isOpen = !!userDropdownOpen[user.id];
+                    const userItems = userItemsMulty[user.id] || [];
+                    const personal = calculateSummaryForUser(user.id);
+                    // Для боржника показуємо рівно ту суму, що стане боргом; для платника — його частку чека
+                    const amount = debtReceiverUser && !isPayer ? (owedByUser[user.id] || 0) : perUserShare + personal;
+                    const shared = Math.max(0, Number((amount - personal).toFixed(2)));
+
+                    return (
+                        <View key={user.id} style={[formStyles.card, formStyles.itemsCard, { backgroundColor: surface }]}>
+                            <SectionHeader
+                                leading={<Avatar uri={user.avatar} name={user.name} size={40} />}
+                                title={displayName(user)}
+                                badge={isPayer ? 'платник' : undefined}
+                                subtitle={describeUserPart(personal, shared)}
+                                amount={money(amount)}
+                                isOpen={isOpen}
+                                onPress={() => toggleUserDropdown(user.id)}
+                            />
+                            {isOpen && (
+                                <View style={formStyles.items}>
+                                    {userItems.map((item, index) => (
+                                        <DebtItemComponent
+                                            ref={el => { if (el) itemRefs.current[item.id] = el; }}
+                                            key={item.id}
+                                            id={item.id}
+                                            text={item.text}
+                                            num={item.num.toString()}
+                                            onTextChange={(text) => updateUserItemMulty(user.id, index, 'text', text)}
+                                            onNumChange={(num) => updateUserItemMulty(user.id, index, 'num', num)}
+                                            onDelete={() => deleteUserItemMulty(user.id, index)}
+                                            isLast={false}
+                                            isOnly={false}
+                                            onAdd={() => handleAddUserItem(user.id)}
+                                            onSplit={(x, y, w, h) => handleSplitPress(user.id, index, x, y, w, h)}
+                                            isViewMode={isViewMode}
+                                            index={index}
+                                            totalCount={userItems.length}
+                                        />
+                                    ))}
+                                    {isViewMode
+                                        ? userItems.length === 0 && renderEmptyHint()
+                                        : <AddItemButton onPress={() => handleAddUserItem(user.id)} />}
+                                </View>
+                            )}
+                        </View>
+                    );
+                })}
+
+                {hasData && (
+                    <View>
+                        <ClearFormButton onPress={confirmClear} />
+                    </View>
+                )}
+            </ScrollView>
+
+            {/* Скільки разом і головна дія */}
+            <FormFooter
+                rows={debtReceiverUser
+                    ? [
+                        { label: 'Сума чека', value: money(grandTotal) },
+                        { label: 'Сума боргів', value: money(owedTotal), primary: true },
+                    ]
+                    : [{ label: 'Сума чека', value: money(grandTotal), primary: true }]}
+                buttonLabel="Створити борг"
+                onPress={handleCreateDebtMulty}
+            >
+                <ErrorToast error={error} onHide={() => setError(null)} style={formStyles.toast} />
+            </FormFooter>
+
             <UserSelectionModal
                 visible={isUserListModalVisible}
                 onClose={closeUserListModal}
+                title={userSelector === 'payer' ? 'Хто платив' : 'Учасники'}
                 userList={userList}
-                mode="multy"
-                receiverId={debtReceiverUser?.id}
-                isUserParticipant={isUserParticipant}
-                onSelectMulty={handleUserSelectionChangeMulty}
+                currentUserId={currentUser?.id}
+                multiple={userSelector === 'participants'}
+                isSelected={(user) => userSelector === 'payer' ? debtReceiverUser?.id === user.id : isUserParticipant(user)}
+                onSelect={userSelector === 'payer' ? selectPayer : toggleParticipant}
+                getTag={(user) => userSelector === 'participants' && debtReceiverUser?.id === user.id ? 'платник' : undefined}
             />
 
-            {/* Modal for Popover Split */}
+            {/* Меню позиції: розділити з іншими учасниками або помножити чи поділити суму */}
             {splitItemState && (() => {
                 const windowWidth = Dimensions.get('window').width;
                 const windowHeight = Dimensions.get('window').height;
-                
+
                 // Розраховуємо ідеальну позицію:
                 // Хочемо щоб центр вікна (приблизно 100px від правого краю вікна) співпадав з центром кнопки.
                 // Якщо ця позиція вилазить за екран (right < 16), то фіксуємо right = 16.
@@ -489,75 +662,92 @@ const MultyTab: React.FC<MultyTabProps> = ({ userList, onHasDataChange }) => {
                 const idealRightPos = windowWidth - buttonCenter - 100; // 100 - половина орієнтовної ширини вікна
                 const clampedRightPos = Math.max(16, idealRightPos);
 
+                const splitItem = (userItemsMulty[splitItemState.userId] || [])[splitItemState.index];
+                const multiplier = splitItem?.multiplier !== undefined ? splitItem.multiplier : 1;
+                const otherParticipants = selectedUsersMulty.filter(u => u.id !== splitItemState.userId);
+
                 return (
-                    <Modal transparent={true} visible={true} animationType="fade" statusBarTranslucent={true}>
-                        <TouchableOpacity 
-                            style={StyleSheet.absoluteFill} 
-                            onPress={() => setSplitItemState(null)} 
+                    <Modal transparent={true} visible={true} animationType="fade" statusBarTranslucent={true} onRequestClose={() => setSplitItemState(null)}>
+                        <TouchableOpacity
+                            style={StyleSheet.absoluteFill}
+                            onPress={() => setSplitItemState(null)}
                             activeOpacity={1}
+                            accessibilityLabel="Закрити меню позиції"
                         />
                         <View style={[
-                            styles.popoverContainer, 
-                            { 
+                            styles.popoverContainer,
+                            {
                                 backgroundColor: colors.background,
                                 borderColor: colors.border,
-                                position: 'absolute',
                                 bottom: windowHeight - splitItemState.y + 8,
                                 right: clampedRightPos
                             }
                         ]}>
                             {splitStep === 'menu' ? (
                                 <View>
-                                    <TouchableOpacity 
-                                        style={[styles.popoverUserRow, { borderBottomWidth: 0, paddingVertical: 8, paddingHorizontal: 4 }]}
+                                    <TouchableOpacity
+                                        style={styles.popoverMenuRow}
                                         onPress={() => setSplitStep('users')}
+                                        accessibilityRole="button"
                                     >
-                                        <MaterialIcons name="call-split" size={24} color={colors.iconSecondary} />
-                                        <Text style={[styles.popoverUserName, { flex: 0, color: colors.text }]}>Розділити</Text>
+                                        <Icon name="call-split" size={20} color={colors.iconSecondary} />
+                                        <Text style={[styles.popoverUserName, { color: colors.text }]}>Розділити з іншими</Text>
                                     </TouchableOpacity>
-                                    
+
                                     <View style={[styles.multiplierContainer, { borderTopColor: colors.border }]}>
-                                        <TouchableOpacity style={[styles.multiplierButton, { backgroundColor: colors.inputBg, borderColor: colors.border }]} onPress={() => handleMultiplierChange(-1)}>
-                                            <MaterialIcons name="remove" size={16} color={colors.icon} />
+                                        <TouchableOpacity
+                                            style={[styles.multiplierButton, { backgroundColor: surface }]}
+                                            onPress={() => handleMultiplierChange(-1)}
+                                            accessibilityRole="button"
+                                            accessibilityLabel="Зменшити множник суми"
+                                        >
+                                            <Icon name="remove" size={16} color={colors.icon} />
                                         </TouchableOpacity>
-                                        
+
+                                        {/* Додатний множник множить суму, від'ємний — ділить */}
                                         <Text style={[styles.multiplierText, { color: colors.text }]}>
-                                            {(() => {
-                                                const userItems = userItemsMulty[splitItemState.userId] || [];
-                                                const item = userItems[splitItemState.index];
-                                                return (item?.multiplier !== undefined ? item.multiplier : 1) + 'x';
-                                            })()}
+                                            {multiplier > 0 ? `×${multiplier}` : `÷${Math.abs(multiplier)}`}
                                         </Text>
 
-                                        <TouchableOpacity style={[styles.multiplierButton, { backgroundColor: colors.inputBg, borderColor: colors.border }]} onPress={() => handleMultiplierChange(1)}>
-                                            <MaterialIcons name="add" size={16} color={colors.icon} />
+                                        <TouchableOpacity
+                                            style={[styles.multiplierButton, { backgroundColor: surface }]}
+                                            onPress={() => handleMultiplierChange(1)}
+                                            accessibilityRole="button"
+                                            accessibilityLabel="Збільшити множник суми"
+                                        >
+                                            <Icon name="add" size={16} color={colors.icon} />
                                         </TouchableOpacity>
                                     </View>
                                 </View>
                             ) : (
                                 <View style={styles.popoverUsersContainer}>
                                     <Text style={[styles.popoverTitle, { color: colors.textSecondary }]}>Розділити з:</Text>
+                                    {otherParticipants.length === 0 && (
+                                        <Text style={[styles.popoverEmpty, { color: colors.textSecondary }]}>Немає інших учасників</Text>
+                                    )}
                                     <ScrollView style={styles.popoverScrollView} contentContainerStyle={{ flexGrow: 0 }}>
-                                        {selectedUsersMulty.filter(u => u.id !== splitItemState.userId).map(user => {
+                                        {otherParticipants.map(user => {
                                             const isSelected = splitSelectedUsers.some(u => u.id === user.id);
                                             return (
-                                                <TouchableOpacity 
-                                                    key={user.id} 
+                                                <TouchableOpacity
+                                                    key={user.id}
                                                     style={[styles.popoverUserRow, { borderBottomColor: colors.border }]}
                                                     onPress={() => handleSplitUserSelection(user)}
+                                                    accessibilityRole="checkbox"
+                                                    accessibilityState={{ checked: isSelected }}
                                                 >
-                                                    <MaterialIcons
+                                                    <Icon
                                                         name={isSelected ? "check-box" : "check-box-outline-blank"}
                                                         size={24}
-                                                        color={isSelected ? colors.positiveText : colors.iconSecondary}
+                                                        color={isSelected ? colors.text : colors.iconSecondary}
                                                     />
-                                                    <Text style={[styles.popoverUserName, { color: colors.text }]} numberOfLines={1}>{user.name}</Text>
+                                                    <Text style={[styles.popoverUserName, { color: colors.text }]} numberOfLines={1}>{displayName(user)}</Text>
                                                 </TouchableOpacity>
                                             );
                                         })}
                                     </ScrollView>
-                                    <TouchableOpacity style={[styles.popoverConfirmButton, { backgroundColor: colors.buttonBg }]} onPress={confirmSplit}>
-                                        <Text style={[styles.popoverConfirmText, { color: colors.buttonText }]}>ОК</Text>
+                                    <TouchableOpacity style={[styles.popoverConfirmButton, { backgroundColor: colors.buttonBg }]} onPress={confirmSplit} accessibilityRole="button">
+                                        <Text style={[styles.popoverConfirmText, { color: colors.buttonText }]}>Готово</Text>
                                     </TouchableOpacity>
                                 </View>
                             )}
@@ -566,139 +756,6 @@ const MultyTab: React.FC<MultyTabProps> = ({ userList, onHasDataChange }) => {
                 );
             })()}
 
-            {/* Total Row for Multy */}
-            <Animated.View layout={LinearTransition.duration(200)} style={[styles.multyTotalRow, { borderBottomColor: colors.border }]}>
-                <TouchableOpacity 
-                    style={styles.multyTotalHeader} 
-                    onPress={toggleTotalDropdown}
-                >
-                    <View style={styles.multyTotalLabelContainer}>
-                        <Text style={[styles.multyTotalLabelText, { color: colors.text }]}>TOTAL</Text>
-                        <MaterialIcons 
-                            name={isTotalDropdownOpen ? "arrow-drop-up" : "arrow-drop-down"} 
-                            size={20} 
-                            color={colors.iconSecondary} 
-                        />
-                    </View>
-                    <View style={styles.summaryDebtContainer}>
-                        <Text style={[styles.multySummaryText, { color: colors.textSecondary }]}>Загальна сума: {calculateTotalMulty().toFixed(2)}</Text>
-                        {selectedUsersMulty.length > 0 && (
-                            <Text style={[styles.multyDebtText, { color: colors.text }]}>Поділ: {perUserShare.toFixed(2)} на кожного</Text>
-                        )}
-                    </View>
-                </TouchableOpacity>
-                <View>
-                    {/* Додаємо кнопку, якщо totalItemsMulty.length === 0 */}
-                    {isTotalDropdownOpen && totalItemsMulty.length === 0 && (
-                        <TouchableOpacity 
-                            style={[styles.addFirstItemButton, { backgroundColor: colors.card, borderColor: colors.border }]}
-                            onPress={handleAddTotalItem}
-                        >
-                            <MaterialIcons name="add" size={24} color={colors.iconSecondary} />
-                            <Text style={[styles.addFirstItemText, { color: colors.textSecondary }]}>Додати спільний борг</Text>
-                        </TouchableOpacity>
-                    )}
-                    {isTotalDropdownOpen && totalItemsMulty.map((item, index) => (
-                        <DebtItemComponent
-                            ref={el => { if (el) itemRefs.current[item.id] = el; }}
-                            key={item.id}
-                            id={item.id}
-                            text={item.text}
-                            num={item.num.toString()}
-                            onTextChange={(text) => updateDebtItemMultyTotal(index, 'text', text)}
-                            onNumChange={(num) => updateDebtItemMultyTotal(index, 'num', num)}
-                            onDelete={() => deleteTotalItemMulty(index)}
-                            isLast={false}
-                            isOnly={false} // <-- дозволяє видаляти всі поля
-                            onAdd={handleAddTotalItem}
-                            isViewMode={isViewMode}
-                            index={index}
-                            totalCount={totalItemsMulty.length}
-                        />
-                    ))}
-                    {isTotalDropdownOpen && totalItemsMulty.length > 0 && !isViewMode && (
-                        <TouchableOpacity onPress={handleAddTotalItem} style={[styles.addButton, { backgroundColor: colors.inputBg, borderColor: colors.border }]}>
-                            <MaterialIcons name="add" size={24} color={colors.iconSecondary} />
-                        </TouchableOpacity>
-                    )}
-                </View>
-            </Animated.View>
-
-
-            {/* User Rows for Multy */}
-            {selectedUsersMulty.map((user) => (
-                <Animated.View key={user.id} layout={LinearTransition.duration(200)} style={[styles.multyUserSection, { borderBottomColor: colors.border }]}>
-                    <TouchableOpacity 
-                        style={styles.multyUserRowHeader} 
-                        onPress={() => {
-                            toggleUserDropdown(user.id);
-                        }}
-                    >
-                        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                            <Text style={[styles.multyUserNameText, { color: colors.text }]}>{user.name}</Text>
-                            <MaterialIcons 
-                                name={userDropdownOpen[user.id] ? "arrow-drop-up" : "arrow-drop-down"} 
-                                size={20} 
-                                color={colors.iconSecondary} 
-                            />
-                        </View>
-                        <View style={styles.summaryDebtContainer}>
-                            <Text style={[styles.multySummaryText, { color: colors.textSecondary }]}>Загальна сума: {calculateSummaryForUser(user.id)}</Text>
-                            <Text style={[styles.multyDebtText, { color: colors.text }]}>Борг до {debtReceiverUser?.name || '...'} : {calculateDebtForUser(user)}</Text>
-                        </View>
-                    </TouchableOpacity>
-                    {userDropdownOpen[user.id] && (
-                        <View>
-                            {/* Кнопка додавання, якщо немає елементів */}
-                            {(!userItemsMulty[user.id] || userItemsMulty[user.id].length === 0) ? (
-                                <TouchableOpacity 
-                                    style={[styles.addFirstItemButton, { backgroundColor: colors.card, borderColor: colors.border }]}
-                                    onPress={() => handleAddUserItem(user.id)}
-                                >
-                                    <MaterialIcons name="add" size={24} color={colors.iconSecondary} />
-                                    <Text style={[styles.addFirstItemText, { color: colors.textSecondary }]}>Додати персональний борг</Text>
-                                </TouchableOpacity>
-                            ) : (
-                                (userItemsMulty[user.id] || []).map((item, index) => (
-                                    <DebtItemComponent
-                                        ref={el => { if (el) itemRefs.current[item.id] = el; }}
-                                        key={item.id}
-                                        id={item.id}
-                                        text={item.text}
-                                        num={item.num.toString()}
-                                        onTextChange={(text) => updateUserItemMulty(user.id, index, 'text', text)}
-                                        onNumChange={(num) => updateUserItemMulty(user.id, index, 'num', num)}
-                                        onDelete={() => deleteUserItemMulty(user.id, index)}
-                                        isLast={false}
-                                        isOnly={false}
-                                        onAdd={() => handleAddUserItem(user.id)}
-                                        onSplit={(x, y, w, h) => handleSplitPress(user.id, index, x, y, w, h)}
-                                        isViewMode={isViewMode}
-                                        index={index}
-                                        totalCount={(userItemsMulty[user.id] || []).length}
-                                    />
-                                ))
-                            )}
-                            {userDropdownOpen[user.id] && userItemsMulty[user.id] && userItemsMulty[user.id].length > 0 && !isViewMode && (
-                                <TouchableOpacity onPress={() => handleAddUserItem(user.id)} style={[styles.addButton, { backgroundColor: colors.inputBg, borderColor: colors.border }]}>
-                                    <MaterialIcons name="add" size={24} color={colors.iconSecondary} />
-                                </TouchableOpacity>
-                            )}
-                        </View>
-                    )}
-                </Animated.View>
-            ))}
-
-            {/* Bottom Add Debt Button for Multy */}
-            <Animated.View layout={LinearTransition.duration(200)} style={{ marginTop: 'auto', marginBottom: 0 }}>
-                <TouchableOpacity
-                    style={[AddScreenStyles.createButton, { backgroundColor: colors.buttonBg }]}
-                    onPress={handleCreateDebtMulty}
-                >
-                    <Text style={[AddScreenStyles.createButtonText, { color: colors.buttonText, fontSize: 16 * textScale }]}>Створити борг</Text>
-                </TouchableOpacity>
-            </Animated.View>
-
             <ConfirmDebtModal
                 visible={confirmModalVisible}
                 onClose={() => {
@@ -706,14 +763,18 @@ const MultyTab: React.FC<MultyTabProps> = ({ userList, onHasDataChange }) => {
                     setIsSuccess(false);
                 }}
                 onConfirm={confirmDebtCreation}
-                debtInfo={debtReceiverUser ? {
-                    fromUser: selectedUsersMulty.map(u => u.name).join(', '),
-                    toUser: debtReceiverUser.name,
-                    totalAmount: calculateGrandTotal(),
-                    itemsCount: totalItemsMulty.length + 
-                        Object.values(userItemsMulty).reduce((acc, items) => acc + items.length, 0)
+                summary={debtReceiverUser ? {
+                    rows: [
+                        { label: 'Платник', value: displayName(debtReceiverUser) },
+                        { label: 'Боржники', value: debtors.map(displayName).join(', ') || '—' },
+                        { label: 'Позицій', value: String(itemsCount) },
+                        { label: 'Сума чека', value: money(grandTotal) },
+                    ],
+                    amountLabel: 'Сума боргів',
+                    amount: owedTotal,
                 } : null}
                 isSuccess={isSuccess}
+                isSubmitting={isSubmitting}
             />
 
             <QRScannerModal
@@ -730,151 +791,14 @@ const MultyTab: React.FC<MultyTabProps> = ({ userList, onHasDataChange }) => {
                     setTotalItemsMulty(prev => [...prev, item]);
                 }}
             />
-
-            <ErrorToast error={error} onHide={() => setError(null)} />
-        </ScrollView>
+        </View>
     );
 };
 
 const styles = StyleSheet.create({
-    multyTabContainer: {
-        flex: 1,
-        paddingHorizontal: 16,
-    },
-    multyTopBarContainer: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        marginVertical: 20,
-    },
-    multyUserSelectorContainer: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        flex: 1,
-        marginRight: 10,
-    },
-    multyUserButton: {
-        backgroundColor: '#F5F5F5',
-        borderRadius: 8,
-        padding: 12,
-        marginRight: 10,
-        minWidth: 45,
-        alignItems: 'center',
-        justifyContent: 'center',
-        borderWidth: 1,
-        borderColor: '#E0E0E0',
-    },
-    multyAllUsersText: {
-        fontSize: 16,
-        fontFamily: 'MontserratBold',
-        flex: 1,
-    },
-    topGrandTotalIsland: {
-        backgroundColor: '#F5F5F5',
-        paddingHorizontal: 12,
-        paddingVertical: 8,
-        borderRadius: 8,
-        borderWidth: 1,
-        borderColor: '#E0E0E0',
-        alignItems: 'center',
-        justifyContent: 'center',
-        flexDirection: 'row',
-    },
-    topGrandTotalText: {
-        fontSize: 18,
-        fontFamily: 'MontserratBold',
-        color: '#000',
-    },
-    topGrandTotalCurrency: {
-        fontSize: 12,
-        fontFamily: 'Montserrat',
-        color: '#666',
-        marginLeft: 4,
-        marginTop: 4,
-    },
-    multyTotalRow: {
-        marginBottom: 15,
-        borderBottomWidth: 1,
-        borderBottomColor: '#E0E0E0',
-    },
-    multyUserSection: {
-        marginBottom: 5,
-        borderBottomWidth: 1,
-        borderBottomColor: '#E0E0E0',
-    },
-    multyUserRowHeader: {
-        flexDirection: 'column',
-        alignItems: 'flex-start',
-        marginBottom: 10,
-    },
-    multyTotalLabelContainer: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        marginBottom: 5,
-    },
-    multyTotalLabelText: {
-        fontSize: 16,
-        fontWeight: 'bold',
-        marginRight: 5,
-    },
-    multyUserNameText: {
-        fontSize: 16,
-        fontWeight: 'bold',
-        marginRight: 5,
-        marginBottom: 5,
-    },
-    multySummaryText: {
-        fontSize: 14,
-        color: 'grey',
-        marginRight: 10,
-    },
-    multyDebtText: {
-        fontSize: 16,
-        fontWeight: 'bold',
-    },
-    multyCreateButton: {
-        marginBottom: 15,
-    },
-    summaryDebtContainer: {
-        flexDirection: 'row',
-        alignItems: 'center',
-    },
-    multyTotalHeader: {
-        marginBottom: 10,
-    },
-    addFirstItemButton: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: 15,
-        backgroundColor: '#F5F5F5',
-        borderRadius: 8,
-        borderWidth: 1,
-        borderColor: '#E0E0E0',
-        marginVertical: 10,
-    },
-    addButton: {
-        alignSelf: 'center',
-        padding: 12,
-        backgroundColor: '#E0E0E0',
-        marginTop: 4,
-        marginBottom: 16,
-        borderRadius: 8,
-        borderWidth: 1,
-        borderColor: '#E0E0E0',
-        width: '100%',
-        alignItems: 'center',
-    },
-    addFirstItemText: {
-        marginLeft: 8,
-        fontSize: 14,
-        color: '#666',
-        fontFamily: 'Montserrat',
-    },
     popoverContainer: {
         position: 'absolute',
-        backgroundColor: '#fff',
-        borderRadius: 8,
+        borderRadius: 16,
         padding: 8,
         shadowColor: '#000',
         shadowOffset: { width: 0, height: 2 },
@@ -882,55 +806,58 @@ const styles = StyleSheet.create({
         shadowRadius: 3.84,
         elevation: 5,
         borderWidth: 1,
-        borderColor: '#E0E0E0',
     },
-    popoverMenuItem: {
-        paddingVertical: 10,
-        paddingHorizontal: 16,
+    popoverMenuRow: {
+        flexDirection: 'row',
         alignItems: 'center',
-    },
-    popoverMenuText: {
-        fontSize: 16,
-        fontFamily: 'MontserratBold',
-        color: '#000',
+        minHeight: 44,
+        paddingHorizontal: 8,
     },
     popoverUsersContainer: {
-        minWidth: 150,
+        minWidth: 180,
         maxWidth: 250,
     },
     popoverTitle: {
         fontSize: 14,
-        fontFamily: 'MontserratBold',
-        color: '#666',
+        fontFamily: 'NunitoSansBold',
+        letterSpacing: 0.3,
         marginBottom: 8,
         textAlign: 'center',
     },
+    popoverEmpty: {
+        fontSize: 13,
+        fontFamily: 'NunitoSans',
+        letterSpacing: 0.3,
+        textAlign: 'center',
+        paddingVertical: 8,
+    },
     popoverScrollView: {
-        maxHeight: 150,
+        maxHeight: 176,
     },
     popoverUserRow: {
         flexDirection: 'row',
         alignItems: 'center',
-        paddingVertical: 8,
-        borderBottomWidth: 1,
-        borderBottomColor: '#F0F0F0',
+        minHeight: 44,
+        paddingHorizontal: 4,
+        borderBottomWidth: StyleSheet.hairlineWidth,
     },
     popoverUserName: {
         fontSize: 14,
-        fontFamily: 'Montserrat',
+        fontFamily: 'NunitoSans',
+        letterSpacing: 0.3,
         marginLeft: 8,
-        flex: 1,
+        flexShrink: 1,
     },
     popoverConfirmButton: {
-        backgroundColor: '#000',
-        borderRadius: 6,
-        paddingVertical: 8,
+        minHeight: 44,
+        borderRadius: 22,
+        justifyContent: 'center',
         alignItems: 'center',
         marginTop: 10,
     },
     popoverConfirmText: {
-        color: '#fff',
-        fontFamily: 'MontserratBold',
+        fontFamily: 'NunitoSansBold',
+        letterSpacing: 0.3,
         fontSize: 14,
     },
     multiplierContainer: {
@@ -938,25 +865,24 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
         gap: 16,
-        paddingVertical: 10,
-        borderTopWidth: 1,
-        borderTopColor: '#F0F0F0',
+        paddingTop: 8,
+        paddingBottom: 4,
+        borderTopWidth: StyleSheet.hairlineWidth,
         marginTop: 4,
     },
     multiplierButton: {
-        width: 32,
-        height: 32,
-        borderRadius: 6,
-        backgroundColor: '#F5F5F5',
+        width: 44,
+        height: 44,
+        borderRadius: 22,
         alignItems: 'center',
         justifyContent: 'center',
-        borderWidth: 1,
-        borderColor: '#E0E0E0',
     },
     multiplierText: {
+        minWidth: 32,
+        textAlign: 'center',
         fontSize: 16,
-        fontFamily: 'MontserratBold',
-        color: '#000',
+        fontFamily: 'NunitoSansBold',
+        letterSpacing: 0.3,
     },
 });
 
