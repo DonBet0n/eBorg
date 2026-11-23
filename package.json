@@ -1,7 +1,7 @@
 {
   "name": "eborg",
   "main": "expo-router/entry",
-  "version": "2.1.1",
+  "version": "2.3.1",
   "scripts": {
     "start": "expo start",
     "android": "expo run:android",
