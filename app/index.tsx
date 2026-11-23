@@ -10,6 +10,10 @@ import Icon from '@/components/ui/Icon';
 import AuthBackdrop from '@/components/auth/AuthBackdrop';
 import CoinBurst from '@/components/auth/CoinBurst';
 import { useFirebase } from '../contexts/FirebaseContext';
+import {
+  getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail, signOut,
+} from '@react-native-firebase/auth';
+import { getFirestore, doc, setDoc, serverTimestamp } from '@react-native-firebase/firestore';
 import { useAppTheme } from '../contexts/ThemeContext';
 import { appStyles } from '@/utils/appStyles';
 import { appAlert } from '@/components/ui/AppDialog';
@@ -56,7 +60,7 @@ const authErrorMessage = (code: string | undefined, mode: Mode) => {
 };
 
 const AuthScreen = () => {
-  const { auth, db, setUser, getCurrentUser } = useFirebase();
+  const { setUser, getCurrentUser } = useFirebase();
   const { colors, isDark } = useAppTheme();
   const insets = useSafeAreaInsets();
   const [mode, setMode] = useState<Mode>('login');
@@ -104,7 +108,7 @@ const AuthScreen = () => {
   useEffect(() => {
     const checkSession = async () => {
       try {
-        if (auth().currentUser) {
+        if (getAuth().currentUser) {
           const user = await getCurrentUser();
           if (user) {
             setUser(user);
@@ -119,7 +123,7 @@ const AuthScreen = () => {
       }
     };
     checkSession();
-  }, [auth, getCurrentUser, setUser]);
+  }, [getCurrentUser, setUser]);
 
   useEffect(() => {
     Animated.spring(thumbX, {
@@ -154,26 +158,26 @@ const AuthScreen = () => {
 
   const signIn = async () => {
     const address = email.trim();
-    const credential = await auth().signInWithEmailAndPassword(address, password);
+    const credential = await signInWithEmailAndPassword(getAuth(), address, password);
     let user = await getCurrentUser();
     if (!user) {
       // Профіль міг не записатися, якщо під час реєстрації обірвався зв'язок: відновлюємо його, щоб акаунт не лишився без доступу
       try {
-        await db().collection('users').doc(credential.user.uid).set({
+        await setDoc(doc(getFirestore(), 'users', credential.user.uid), {
           name: name.trim() || address.split('@')[0].slice(0, MAX_NAME),
           email: address,
-          updatedAt: db.FieldValue.serverTimestamp(),
+          updatedAt: serverTimestamp(),
         });
         user = await getCurrentUser();
       } catch (error) {
-        await auth().signOut();
+        await signOut(getAuth());
         throw error;
       }
     }
     if (user) {
       router.replace('/(tabs)/HomeScreen');
     } else {
-      await auth().signOut();
+      await signOut(getAuth());
       fail('Не вдалося завантажити профіль. Спробуйте ще раз');
     }
   };
@@ -189,11 +193,11 @@ const AuthScreen = () => {
     setIsSubmitting(true);
     try {
       if (!isLogin) {
-        const credential = await auth().createUserWithEmailAndPassword(email.trim(), password);
-        await db().collection('users').doc(credential.user.uid).set({
+        const credential = await createUserWithEmailAndPassword(getAuth(), email.trim(), password);
+        await setDoc(doc(getFirestore(), 'users', credential.user.uid), {
           name: name.trim(),
           email: email.trim(),
-          updatedAt: db.FieldValue.serverTimestamp(),
+          updatedAt: serverTimestamp(),
         });
       }
       await signIn();
@@ -214,7 +218,7 @@ const AuthScreen = () => {
       return;
     }
     try {
-      await auth().sendPasswordResetEmail(address);
+      await sendPasswordResetEmail(getAuth(), address);
       setFormError(null);
       appAlert('Перевірте пошту', `Ми надіслали посилання для зміни пароля на ${address}`);
     } catch (error: any) {

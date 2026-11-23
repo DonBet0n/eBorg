@@ -13,10 +13,6 @@ import { SheetHost } from '../components/ui/SheetHost';
 import { AppDialogHost } from '../components/ui/AppDialog';
 import { firebaseReady } from '../utils/firebaseReady';
 
-// React Native Firebase у dev-режимі пише попередження про застарілий API на кожен виклик
-// (десятки за секунду при синхронізації), і це помітно гальмує JS-потік. Перехід на модульний API — окрема задача
-(globalThis as { RNFB_SILENCE_MODULAR_DEPRECATION_WARNINGS?: boolean }).RNFB_SILENCE_MODULAR_DEPRECATION_WARNINGS = true;
-
 // Prevent the splash screen from auto-hiding before asset loading is complete.
 SplashScreen.preventAutoHideAsync();
 

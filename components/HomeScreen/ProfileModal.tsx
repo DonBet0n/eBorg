@@ -3,6 +3,8 @@ import { View, Text, TouchableOpacity, TextInput, ActivityIndicator, ScrollView 
 import Icon from '@/components/ui/Icon';
 import Avatar from '@/components/ui/Avatar';
 import { useFirebase } from '../../contexts/FirebaseContext';
+import { getAuth, signOut } from '@react-native-firebase/auth';
+import { getFirestore, doc, updateDoc, serverTimestamp, deleteField } from '@react-native-firebase/firestore';
 import * as ImagePicker from 'expo-image-picker';
 import * as ImageManipulator from 'expo-image-manipulator';
 import { router } from 'expo-router';
@@ -23,7 +25,7 @@ interface ProfileModalProps {
 // Одна форма: фото змінюється одразу (як у месенджерах), ім'я та прізвище редагуються на місці
 // і зберігаються кнопкою, яка активна лише коли є зміни
 const ProfileModal: React.FC<ProfileModalProps> = ({ visible, onClose }) => {
-    const { user, db, getCurrentUser, setUser, auth } = useFirebase();
+    const { user, getCurrentUser, setUser } = useFirebase();
     const { colors, isDark } = useAppTheme();
     const [name, setName] = useState('');
     const [secondName, setSecondName] = useState('');
@@ -41,9 +43,9 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ visible, onClose }) => {
 
     const updateUser = async (fields: Record<string, unknown>) => {
         if (!user) return;
-        await db().collection('users').doc(user.id).update({
+        await updateDoc(doc(getFirestore(), 'users', user.id), {
             ...fields,
-            updatedAt: db.FieldValue.serverTimestamp(),
+            updatedAt: serverTimestamp(),
         });
         await getCurrentUser();
     };
@@ -80,7 +82,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ visible, onClose }) => {
     const removeAvatar = async () => {
         setIsAvatarUpdating(true);
         try {
-            await updateUser({ avatar: db.FieldValue.delete() });
+            await updateUser({ avatar: deleteField() });
         } catch (error) {
             console.error('Error removing avatar:', error);
             appAlert('Помилка', 'Не вдалося видалити фото. Спробуйте ще раз.');
@@ -121,7 +123,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ visible, onClose }) => {
 
     const logout = async () => {
         try {
-            await auth().signOut();
+            await signOut(getAuth());
             setUser(null);
             onClose();
             router.replace('/');

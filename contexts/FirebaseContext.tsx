@@ -1,6 +1,11 @@
 import React, { createContext, useContext, useState, useCallback, useEffect, useRef, useMemo } from 'react';
-import auth from '@react-native-firebase/auth';
-import firestore, { FirebaseFirestoreTypes } from '@react-native-firebase/firestore';
+import { getAuth, onAuthStateChanged, signOut } from '@react-native-firebase/auth';
+import {
+  getFirestore, collection, doc, query, where, onSnapshot, writeBatch, updateDoc,
+  getDoc, getDocFromCache, getDocFromServer, getDocsFromServer, getCountFromServer,
+  serverTimestamp, Timestamp,
+} from '@react-native-firebase/firestore';
+import type { DocumentData, Query, QuerySnapshot, WriteBatch } from '@react-native-firebase/firestore';
 import NetInfo from '@react-native-community/netinfo';
 import { AppState } from 'react-native';
 import { User, Statistics, DebtGroup, Transaction } from '../types/debt';
@@ -72,8 +77,6 @@ export interface NewDebt {
 }
 
 export type FirebaseContextType = {
-  auth: typeof auth;
-  db: typeof firestore;
   user: User | null;
   setUser: (user: User | null) => void;
   getCurrentUser: () => Promise<User | null>;
@@ -101,8 +104,6 @@ const emptyStatistics: Statistics = {
 };
 
 export const FirebaseContext = createContext<FirebaseContextType>({
-  auth,
-  db: firestore,
   user: null,
   setUser: () => {},
   getCurrentUser: async () => null,
@@ -121,6 +122,10 @@ export const FirebaseContext = createContext<FirebaseContextType>({
   notifyUser: async () => {},
 });
 
+// Екземпляри беремо під час виклику, а не при імпорті: у браузері застосунок Firebase створюється асинхронно
+const db = () => getFirestore();
+const fbAuth = () => getAuth();
+
 const toMillis = (value: any): number | null => {
   if (!value) return null;
   if (typeof value.toMillis === 'function') return value.toMillis();
@@ -129,7 +134,7 @@ const toMillis = (value: any): number | null => {
   return isNaN(time) ? null : time;
 };
 
-const parseDebt = (id: string, data: FirebaseFirestoreTypes.DocumentData): StoredDebt => ({
+const parseDebt = (id: string, data: DocumentData): StoredDebt => ({
   id,
   deptId: data.deptId,
   ...(data.type ? { type: data.type } : {}),
@@ -141,7 +146,7 @@ const parseDebt = (id: string, data: FirebaseFirestoreTypes.DocumentData): Store
   updatedAt: toMillis(data.updatedAt),
 });
 
-const parseUser = (id: string, data: FirebaseFirestoreTypes.DocumentData): User => ({
+const parseUser = (id: string, data: DocumentData): User => ({
   id,
   name: data.name || '',
   email: data.email || '',
@@ -258,11 +263,10 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
     const cache = usersCacheRef.current;
     const isDelta = !full && cache.lastSync !== null;
 
-    let query: FirebaseFirestoreTypes.Query = firestore().collection('users');
-    if (isDelta) {
-      query = query.where('updatedAt', '>', firestore.Timestamp.fromMillis(Math.max(0, cache.lastSync! - SYNC_OVERLAP_MS)));
-    }
-    const snap = await query.get({ source: 'server' });
+    const usersQuery: Query = isDelta
+      ? query(collection(db(), 'users'), where('updatedAt', '>', Timestamp.fromMillis(Math.max(0, cache.lastSync! - SYNC_OVERLAP_MS))))
+      : collection(db(), 'users');
+    const snap = await getDocsFromServer(usersQuery);
 
     const users: Record<string, User> = isDelta ? { ...usersCacheRef.current.users } : {};
     let maxSeen = isDelta ? cache.lastSync! : 0;
@@ -299,9 +303,9 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
     try {
       const token = await registerForPushNotificationsAsync();
       if (token && savedToken !== token) {
-        await firestore().collection('users').doc(userId).update({
+        await updateDoc(doc(db(), 'users', userId), {
           expoPushToken: token,
-          updatedAt: firestore.FieldValue.serverTimestamp(),
+          updatedAt: serverTimestamp(),
         });
         return token;
       }
@@ -320,8 +324,8 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
     // На старті профіль просять одночасно обробник входу і екран входу — робимо це один раз
     if (profileLoadRef.current?.userId === userId) return profileLoadRef.current.promise;
 
-    const ref = firestore().collection('users').doc(userId);
-    const apply = (raw: FirebaseFirestoreTypes.DocumentData) => {
+    const ref = doc(db(), 'users', userId);
+    const apply = (raw: DocumentData) => {
       const userData = { id: userId, ...raw } as User;
       setUser(userData);
       upsertUsers([parseUser(userId, raw)]);
@@ -333,17 +337,17 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
     };
 
     const load = async (): Promise<User | null> => {
-      const cached = await ref.get({ source: 'cache' }).then(doc => doc.data() ?? null).catch(() => null);
+      const cached = await getDocFromCache(ref).then(snap => snap.data() ?? null).catch(() => null);
       if (cached) {
-        ref.get({ source: 'server' })
-          .then(doc => {
-            const fresh = doc.data();
-            if (fresh && auth().currentUser?.uid === userId) apply(fresh);
+        getDocFromServer(ref)
+          .then(snap => {
+            const fresh = snap.data();
+            if (fresh && fbAuth().currentUser?.uid === userId) apply(fresh);
           })
           .catch(e => devLog('Profile refresh error:', e));
         return apply(cached);
       }
-      const raw = (await ref.get()).data();
+      const raw = (await getDoc(ref)).data();
       return raw ? apply(raw) : null;
     };
 
@@ -355,7 +359,7 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
   }, [upsertUsers, syncPushToken]);
 
   useEffect(() => {
-    const unsubscribe = auth().onAuthStateChanged(async (firebaseUser) => {
+    const unsubscribe = onAuthStateChanged(fbAuth(), async (firebaseUser) => {
       if (firebaseUser) {
         await loadOwnProfile(firebaseUser.uid);
       } else {
@@ -367,13 +371,13 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
   }, [loadOwnProfile]);
 
   const getCurrentUser = useCallback(async () => {
-    const firebaseUser = auth().currentUser;
+    const firebaseUser = fbAuth().currentUser;
     if (!firebaseUser) return null;
     return loadOwnProfile(firebaseUser.uid);
   }, [loadOwnProfile]);
 
   const logout = useCallback(async () => {
-    await auth().signOut();
+    await signOut(fbAuth());
     setUser(null);
   }, []);
 
@@ -403,7 +407,7 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
     const verifying: Record<Direction, boolean> = { fromUserId: false, toUserId: false };
     const maxSeen: Record<Direction, number> = { fromUserId: 0, toUserId: 0 };
 
-    const applySnapshot = (field: Direction, snap: FirebaseFirestoreTypes.QuerySnapshot, isFull: boolean) => {
+    const applySnapshot = (field: Direction, snap: QuerySnapshot, isFull: boolean) => {
       const cache = debtsCacheRef.current;
       if (cancelled || !cache) return;
 
@@ -464,14 +468,18 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
       listeners[field]?.();
       fullMode[field] = since === null;
 
-      let query: FirebaseFirestoreTypes.Query = firestore().collection('debts').where(field, '==', uid);
-      if (since !== null) {
-        query = query.where('updatedAt', '>', firestore.Timestamp.fromMillis(Math.max(0, since - SYNC_OVERLAP_MS)));
-      }
+      const debtsQuery = since === null
+        ? query(collection(db(), 'debts'), where(field, '==', uid))
+        : query(
+          collection(db(), 'debts'),
+          where(field, '==', uid),
+          where('updatedAt', '>', Timestamp.fromMillis(Math.max(0, since - SYNC_OVERLAP_MS))),
+        );
       // includeMetadataChanges: якщо кеш Firestore уже збігається з сервером, підтвердження від сервера
       // змінює лише метадані (fromCache → false), і без цього прапорця такий знімок не приходить —
       // тоді повна синхронізація чекала до тайм-ауту й повідомляла про помилку
-      listeners[field] = query.onSnapshot(
+      listeners[field] = onSnapshot(
+        debtsQuery,
         { includeMetadataChanges: true },
         snap => applySnapshot(field, snap, since === null),
         (error: any) => {
@@ -496,7 +504,7 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
 
       verifying[field] = true;
       try {
-        const snap = await firestore().collection('debts').where(field, '==', uid).count().get();
+        const snap = await getCountFromServer(query(collection(db(), 'debts'), where(field, '==', uid)));
         if (cancelled || debtsCacheRef.current !== cache || fullMode[field]) return;
         const serverCount = snap.data().count;
         const localCount = Object.values(cache.debts).filter(debt => debt[field] === uid && !debt.local).length;
@@ -568,9 +576,9 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
       });
       missing.forEach(id => {
         profileRequestsRef.current.add(id);
-        firestore().collection('users').doc(id).get()
-          .then(doc => {
-            const data = doc.data();
+        getDoc(doc(db(), 'users', id))
+          .then(snap => {
+            const data = snap.data();
             if (data) {
               upsertUsers([parseUser(id, data)]);
             } else {
@@ -642,7 +650,7 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
 
   // Чекаємо підтвердження сервера лише онлайн; офлайн Firestore поставить запис у чергу,
   // а дані вже показані локально. Якщо сервер відхилить запис — відкочуємо.
-  const commitBatch = useCallback(async (batch: FirebaseFirestoreTypes.WriteBatch, rollback: () => void) => {
+  const commitBatch = useCallback(async (batch: WriteBatch, rollback: () => void) => {
     const commit = batch.commit();
     if (isOnlineRef.current) {
       try {
@@ -666,12 +674,12 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
       throw new Error('Сума боргу має бути більшою за нуль');
     }
     const cache = debtsCacheRef.current;
-    const batch = firestore().batch();
+    const batch = writeBatch(db());
     const now = Date.now();
     const ids: string[] = [];
 
     newDebts.forEach(item => {
-      const ref = firestore().collection('debts').doc();
+      const ref = doc(collection(db(), 'debts'));
       ids.push(ref.id);
       const data = {
         deptId: item.deptId ?? String(now),
@@ -681,7 +689,7 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
         text: item.text,
         amount: item.amount,
         createdAt: new Date(now),
-        updatedAt: firestore.FieldValue.serverTimestamp(),
+        updatedAt: serverTimestamp(),
       };
       batch.set(ref, data);
       if (cache && uid && (item.fromUserId === uid || item.toUserId === uid)) {
@@ -703,11 +711,11 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
   const removeDebts = useCallback(async (ids: string[]) => {
     if (ids.length === 0) return;
     const cache = debtsCacheRef.current;
-    const batch = firestore().batch();
+    const batch = writeBatch(db());
     const removed: StoredDebt[] = [];
 
     ids.forEach(id => {
-      batch.delete(firestore().collection('debts').doc(id));
+      batch.delete(doc(db(), 'debts', id));
       if (cache?.debts[id]) {
         removed.push(cache.debts[id]);
         delete cache.debts[id];
@@ -729,8 +737,8 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
     try {
       let token = usersCacheRef.current.users[userId]?.expoPushToken;
       if (!token) {
-        const doc = await firestore().collection('users').doc(userId).get();
-        token = doc.data()?.expoPushToken;
+        const snap = await getDoc(doc(db(), 'users', userId));
+        token = snap.data()?.expoPushToken;
       }
       await sendPushNotification(token, title, body);
     } catch (error) {
@@ -768,7 +776,7 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
     try {
       const [snaps] = await Promise.all([
         Promise.all(DIRECTIONS.map(field =>
-          firestore().collection('debts').where(field, '==', uid).get({ source: 'server' }))),
+          getDocsFromServer(query(collection(db(), 'debts'), where(field, '==', uid))))),
         syncUsers(true),
       ]);
 
@@ -807,8 +815,6 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <FirebaseContext.Provider value={{
-      auth,
-      db: firestore,
       user,
       setUser,
       getCurrentUser,
