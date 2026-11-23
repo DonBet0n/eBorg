@@ -3,6 +3,7 @@ import { Animated, Pressable, StyleSheet, Text, View } from 'react-native';
 import Icon, { IconName } from './Icon';
 import type { MaterialTopTabBarProps } from '@react-navigation/material-top-tabs';
 import { useAppTheme } from '../../contexts/ThemeContext';
+import { appStyles } from '@/utils/appStyles';
 
 const TABS: Record<string, { label: string; icon: IconName }> = {
   HomeScreen: { label: 'Головна', icon: 'home' },
@@ -25,6 +26,7 @@ export default function TabBar({ state, navigation, position }: MaterialTopTabBa
   const addIndex = state.routes.findIndex(route => route.name === 'AddScreen');
   const returnIndex = useRef(0);
   if (state.index !== addIndex) returnIndex.current = state.index;
+
 
   return (
     // Верхня прозора смуга (RAISE) лежить поверх контенту, щоб кнопка «Додати» виступала над баром і лишалась натискною
@@ -147,7 +149,7 @@ export default function TabBar({ state, navigation, position }: MaterialTopTabBa
   );
 }
 
-const styles = StyleSheet.create({
+const styles = appStyles({
   bar: {
     flexDirection: 'row',
     marginTop: -RAISE,

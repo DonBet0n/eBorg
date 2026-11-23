@@ -1,20 +1,23 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Image, RefreshControl } from 'react-native';
+import React, { useState, useMemo } from 'react';
+import { View, Text, TouchableOpacity, ScrollView, Image, RefreshControl, ActivityIndicator } from 'react-native';
+import Avatar from '@/components/ui/Avatar';
 import Icon from '@/components/ui/Icon';
 import { router } from 'expo-router';
 import ProfileModal from '../../components/HomeScreen/ProfileModal';
 import SettingsModal from '../../components/SettingsModal';
-import { formatAmount, pluralize } from '../../utils/debtCalculations';
+import { formatAmount, groupThousands, pluralize } from '../../utils/debtCalculations';
+import { formatClock, formatDayLabel, startOfDay } from '../../utils/date';
 import { useFirebase } from '../../contexts/FirebaseContext';
 import { useAppTheme } from '../../contexts/ThemeContext';
 import { Transaction } from '../../types/debt';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { appStyles } from '@/utils/appStyles';
+import { BUTTON } from '@/constants/Theme';
 
 // Скільки людей видно, поки список згорнутий, і скільки останніх чеків показувати
 const COLLAPSED_LIMIT = 10;
 const RECEIPTS_LIMIT = 10;
 const SKELETON_ROWS = 4;
-const MONTHS = ['січня', 'лютого', 'березня', 'квітня', 'травня', 'червня', 'липня', 'серпня', 'вересня', 'жовтня', 'листопада', 'грудня'];
 
 // Знак відділяємо від числа вузьким нерозривним пробілом
 const PLUS = '+ ';
@@ -38,34 +41,6 @@ const toTime = (value: Date) => {
   return isNaN(time) ? 0 : time;
 };
 
-const startOfDay = (time: number) => {
-  const d = new Date(time);
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-};
-
-// «Сьогодні», «Учора» або «12 вересня»; рік показуємо лише для минулих років
-const formatDay = (dayStart: number) => {
-  const today = new Date();
-  const daysAgo = Math.round((startOfDay(today.getTime()) - dayStart) / 86400000);
-  if (daysAgo === 0) return 'Сьогодні';
-  if (daysAgo === 1) return 'Учора';
-  const date = new Date(dayStart);
-  const label = `${date.getDate()} ${MONTHS[date.getMonth()]}`;
-  return date.getFullYear() === today.getFullYear() ? label : `${label} ${date.getFullYear()}`;
-};
-
-const formatClock = (time: number) => {
-  const date = new Date(time);
-  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
-};
-
-// Розділяє тисячі нерозривним пробілом: 12450.00 → 12 450.00
-const groupThousands = (value: string) => {
-  const [whole, fraction] = value.split('.');
-  const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
-  return fraction ? `${grouped}.${fraction}` : grouped;
-};
-
 // Градієнт зі смужок різної прозорості: не потребує нативного модуля і перезбірки.
 // Найнасиченіший під статус-баром і плавно згасає донизу.
 const GLOW_STRIPS = 96;
@@ -87,26 +62,18 @@ const Glow = ({ color }: { color: string }) => (
 const HomeScreen = () => {
   const [isProfileModalVisible, setIsProfileModalVisible] = useState(false);
   const [isSettingsVisible, setIsSettingsVisible] = useState(false);
-  const { user, getCurrentUser, debts, isOnline, statistics, refreshDebts } = useFirebase();
+  const { user, debts, isOnline, isSyncing, statistics, refreshDebts } = useFirebase();
   const { colors, isDark, textScale, showDecimalsBalance, showDecimalsStatistics, currencySymbol } = useAppTheme();
   const [refreshing, setRefreshing] = useState(false);
   const insets = useSafeAreaInsets();
   const [peopleExpanded, setPeopleExpanded] = useState(false);
 
-  useEffect(() => {
-    const init = async () => {
-      if (!user) {
-        await getCurrentUser();
-      }
-    };
-    init();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const onRefresh = async () => {
+  // Свайп вниз лише запускає оновлення: системний спінер одразу ховається,
+  // а хід оновлення показує індикатор у шапці (він же крутиться під час фонової синхронізації)
+  const onRefresh = () => {
     setRefreshing(true);
-    await refreshDebts();
-    setRefreshing(false);
+    refreshDebts();
+    requestAnimationFrame(() => setRefreshing(false));
   };
 
   const isLoading = !debts;
@@ -125,12 +92,13 @@ const HomeScreen = () => {
   const surface = isDark ? colors.card : colors.cardAlt;
 
   const balanceAbs = Math.abs(statistics.totalBalance);
-  const balanceText = groupThousands(showDecimalsBalance ? formatAmount(balanceAbs) : Math.trunc(balanceAbs).toString());
+  const balanceText = showDecimalsBalance ? formatAmount(balanceAbs) : groupThousands(Math.trunc(balanceAbs).toString());
   // Знак відділяємо від числа вузьким нерозривним пробілом
   const balanceSign = isZero ? '' : isPositive ? PLUS : MINUS;
 
+  // «Копійки» в налаштуваннях впливають лише на головну; тисячі розділені скрізь
   const formatStat = (amount: number) =>
-    groupThousands(showDecimalsStatistics ? formatAmount(amount) : Math.trunc(amount).toString());
+    showDecimalsStatistics ? formatAmount(amount) : groupThousands(Math.trunc(amount).toString());
 
   // Люди з непогашеним залишком: спершу найбільші суми
   const people = useMemo(() => (debts ?? [])
@@ -173,7 +141,7 @@ const HomeScreen = () => {
       if (last && last.key === key) {
         last.items.push(item);
       } else {
-        groups.push({ key, label: formatDay(key), items: [item] });
+        groups.push({ key, label: formatDayLabel(key), items: [item] });
       }
     });
     return groups;
@@ -189,13 +157,9 @@ const HomeScreen = () => {
     </TouchableOpacity>
   );
 
-  const renderAvatar = (uri: string | undefined, name: string) => uri ? (
-    <Image source={{ uri }} style={styles.rowAvatar} />
-  ) : (
-    <View style={[styles.rowAvatar, styles.centered, { backgroundColor: colors.border }]}>
-      <Text style={[styles.avatarInitial, { color: colors.textSecondary }]}>
-        {name ? name.charAt(0).toUpperCase() : '?'}
-      </Text>
+  const renderAvatar = (uri: string | undefined, name: string) => (
+    <View style={styles.rowAvatar}>
+      <Avatar uri={uri} name={name} size={44} />
     </View>
   );
 
@@ -213,13 +177,13 @@ const HomeScreen = () => {
         {renderAvatar(item.userAvatar, item.userName)}
         <View style={styles.rowText}>
           <Text style={[styles.rowTitle, { color: colors.text, fontSize: 16 * textScale }]} numberOfLines={1}>{item.userName}</Text>
-          <Text style={[styles.rowMeta, { color: colors.textSecondary, fontSize: 13 * textScale }]} numberOfLines={1}>{subtitle}</Text>
+          <Text style={[styles.rowMeta, { color: colors.textSecondary, fontSize: 14 * textScale }]} numberOfLines={1}>{subtitle}</Text>
         </View>
         <View style={styles.rowRight}>
-          <Text style={[styles.rowAmount, { color: positive ? colors.positiveText : colors.negativeText, fontSize: 16 * textScale }]}>
+          <Text style={[styles.rowAmount, { color: positive ? colors.positiveText : colors.negativeText, fontSize: 18 * textScale }]}>
             {positive ? PLUS : MINUS}{formatStat(Math.abs(item.amount))} {currencySymbol}
           </Text>
-          <Text style={[styles.rowMeta, { color: colors.textSecondary, fontSize: 13 * textScale }]}>{formatClock(item.time)}</Text>
+          <Text style={[styles.rowMeta, { color: colors.textSecondary, fontSize: 14 * textScale }]}>{formatClock(item.time)}</Text>
         </View>
       </View>
     );
@@ -253,7 +217,7 @@ const HomeScreen = () => {
               </View>
             )}
             <View style={styles.profileText}>
-              <Text style={[styles.profileGreeting, { color: colors.textSecondary, fontSize: 13 * textScale }]} numberOfLines={1}>
+              <Text style={[styles.profileGreeting, { color: colors.textSecondary, fontSize: 14 * textScale }]} numberOfLines={1}>
                 З поверненням
               </Text>
               <Text style={[styles.profileName, { color: colors.text, fontSize: 18 * textScale }]} numberOfLines={1}>
@@ -261,14 +225,23 @@ const HomeScreen = () => {
               </Text>
             </View>
           </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.headerIcon, styles.centered, { backgroundColor: surface }]}
-            onPress={() => setIsSettingsVisible(true)}
-            accessibilityRole="button"
-            accessibilityLabel="Налаштування"
-          >
-            <Icon name="settings" size={22} color={colors.icon} />
-          </TouchableOpacity>
+          <View style={styles.headerActions}>
+            {isSyncing && (
+              <ActivityIndicator
+                size="small"
+                color={colors.iconSecondary}
+                accessibilityLabel="Оновлення даних"
+              />
+            )}
+            <TouchableOpacity
+              style={[styles.headerIcon, styles.centered, { backgroundColor: surface }]}
+              onPress={() => setIsSettingsVisible(true)}
+              accessibilityRole="button"
+              accessibilityLabel="Налаштування"
+            >
+              <Icon name="settings" size={22} color={colors.icon} />
+            </TouchableOpacity>
+          </View>
         </View>
 
         {/* Баланс */}
@@ -290,10 +263,10 @@ const HomeScreen = () => {
               {todayChange > 0 ? PLUS : MINUS}{formatStat(Math.abs(todayChange))} {currencySymbol} за сьогодні
             </Text>
           ) : (
-            <Text style={[styles.balanceLabel, { color: colors.textSecondary, fontSize: 14 * textScale }]}>Сьогодні без змін</Text>
+            <Text style={[styles.balanceLabel, { color: colors.textSecondary, fontSize: 16 * textScale }]}>Сьогодні без змін</Text>
           ))}
           {!isOnline && (
-            <Text style={[styles.balanceLabel, { color: colors.textSecondary, fontSize: 13 * textScale }]}>
+            <Text style={[styles.balanceLabel, { color: colors.textSecondary, fontSize: 14 * textScale }]}>
               Офлайн · дані можуть бути застарілими
             </Text>
           )}
@@ -306,7 +279,7 @@ const HomeScreen = () => {
           ))
         ) : isEmpty ? (
           <View style={styles.empty}>
-            <Text style={[styles.emptyTitle, { color: colors.text, fontSize: 17 * textScale }]}>Записів поки немає</Text>
+            <Text style={[styles.emptyTitle, { color: colors.text, fontSize: 18 * textScale }]}>Записів поки немає</Text>
             <Text style={[styles.rowMeta, { color: colors.textSecondary, fontSize: 14 * textScale }]}>
               Додайте перший борг, і він з&apos;явиться тут.
             </Text>
@@ -332,9 +305,9 @@ const HomeScreen = () => {
                       {renderAvatar(person.userAvatar, person.userName)}
                       <View style={styles.rowText}>
                         <Text style={[styles.rowTitle, { color: colors.text, fontSize: 16 * textScale }]} numberOfLines={1}>{person.userName}</Text>
-                        <Text style={[styles.rowMeta, { color: colors.textSecondary, fontSize: 13 * textScale }]} numberOfLines={1}>{direction}</Text>
+                        <Text style={[styles.rowMeta, { color: colors.textSecondary, fontSize: 14 * textScale }]} numberOfLines={1}>{direction}</Text>
                       </View>
-                      <Text style={[styles.personAmount, { color: owesMe ? colors.positiveText : colors.negativeText, fontSize: 16 * textScale }]}>
+                      <Text style={[styles.personAmount, { color: owesMe ? colors.positiveText : colors.negativeText, fontSize: 18 * textScale }]}>
                         {amount}
                       </Text>
                       <Icon name="chevron-right" size={20} color={colors.iconSecondary} style={styles.personChevron} />
@@ -353,7 +326,7 @@ const HomeScreen = () => {
               <Text accessibilityRole="header" style={[styles.sectionTitle, { color: colors.text, fontSize: 18 * textScale }]}>Останні чеки</Text>
               {dayGroups.map((group, index) => (
                 <View key={group.key} style={index > 0 && styles.day}>
-                  <Text style={[styles.dayLabel, { color: colors.textSecondary, fontSize: 13 * textScale }]}>{group.label}</Text>
+                  <Text style={[styles.dayLabel, { color: colors.textSecondary, fontSize: 14 * textScale }]}>{group.label}</Text>
                   {group.items.map(renderRow)}
                 </View>
               ))}
@@ -375,7 +348,7 @@ const HomeScreen = () => {
   );
 };
 
-const styles = StyleSheet.create({
+const styles = appStyles({
   container: {
     flex: 1,
   },
@@ -405,6 +378,11 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 22,
+  },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
   },
   profile: {
     flex: 1,
@@ -472,10 +450,10 @@ const styles = StyleSheet.create({
     fontVariant: ['tabular-nums'],
   },
   toggle: {
-    minHeight: 48,
+    minHeight: BUTTON.smallHeight,
     justifyContent: 'center',
     alignItems: 'center',
-    borderRadius: 16,
+    borderRadius: BUTTON.smallRadius,
     marginBottom: 8,
   },
   toggleText: {
@@ -506,15 +484,7 @@ const styles = StyleSheet.create({
     marginBottom: 0,
   },
   rowAvatar: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
     marginRight: 12,
-  },
-  avatarInitial: {
-    fontSize: 17,
-    fontFamily: 'NunitoSansBold',
-    letterSpacing: 0.3,
   },
   rowText: {
     flex: 1,

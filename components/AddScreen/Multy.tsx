@@ -1,20 +1,23 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { Alert, Dimensions, Modal, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Dimensions, Modal, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import Icon from '@/components/ui/Icon';
 import Avatar from '@/components/ui/Avatar';
 import DebtItemComponent from '../DebtItem';
 import { User, DebtItem } from '../../types/debt';
 import { useFirebase, NewDebt } from '../../contexts/FirebaseContext';
 import { useAppTheme } from '../../contexts/ThemeContext';
-import { formatAmount, splitAmount } from '../../utils/debtCalculations';
+import { formatAmount, isValidDebtAmount, splitAmount } from '../../utils/debtCalculations';
 import ConfirmDebtModal from './ConfirmDebtModal';
 import UserSelectionModal from './UserSelectionModal';
 import ErrorToast from '../ui/ErrorToast';
 import QRScannerModal from '../QRScannerModal';
 import {
-    AddItemButton, ClearFormButton, FormFooter, GroupIcon, ItemsHeader, PersonRow, SectionHeader,
+    AddItemButton, ClearFormButton, FormFooter, GroupIcon, ItemsHeader, PeopleBar, PersonChip, SectionHeader,
     displayName, formStyles, useFormColors,
 } from './FormParts';
+import { appStyles } from '@/utils/appStyles';
+import { appAlert } from '@/components/ui/AppDialog';
+import { BUTTON } from '@/constants/Theme';
 
 interface MultyTabProps {
     userList: User[];
@@ -363,7 +366,7 @@ const MultyTab: React.FC<MultyTabProps> = ({ userList, onHasItemsChange, header 
     }, []);
 
     const confirmClear = () => {
-        Alert.alert(
+        appAlert(
             'Очистити форму?',
             'Обраних людей і всі позиції буде прибрано.',
             [
@@ -386,8 +389,8 @@ const MultyTab: React.FC<MultyTabProps> = ({ userList, onHasItemsChange, header 
             return false;
         }
 
-        // Сума має бути числом більше нуля: порожнє поле чи сама крапка не проходять
-        const isEmptyAmount = (item: DebtItem) => !(Number(item.num) > 0);
+        // Сума — щонайменше копійка: порожнє поле, сама крапка чи 0.001 не проходять
+        const isEmptyAmount = (item: DebtItem) => !isValidDebtAmount(Number(item.num));
 
         // Перевіряємо лише позиції учасників: позицій тих, кого прибрали зі списку, на екрані немає
         const hasEmptyAmount = totalItemsMulty.some(isEmptyAmount) ||
@@ -498,23 +501,22 @@ const MultyTab: React.FC<MultyTabProps> = ({ userList, onHasItemsChange, header 
                 showsVerticalScrollIndicator={false}
             >
                 {header}
-                {/* Хто платив і між ким ділимо */}
-                <View style={[formStyles.card, { backgroundColor: surface }]}>
-                    <PersonRow
+                {/* Хто платив і між ким ділимо — дві плашки в один рядок */}
+                <PeopleBar>
+                    <PersonChip
                         label="Хто платив"
-                        placeholder="Обрати людину"
+                        placeholder="Обрати"
                         users={debtReceiverUser ? [debtReceiverUser] : []}
                         onPress={() => openUserListModal('payer')}
                     />
-                    <PersonRow
+                    <PersonChip
                         label="Учасники"
-                        placeholder="Обрати, між ким ділити"
+                        placeholder="Обрати"
                         users={selectedUsersMulty}
                         multiple
                         onPress={() => openUserListModal('participants')}
-                        divider
                     />
-                </View>
+                </PeopleBar>
 
                 {/* Що саме: спільне і особисте кожного */}
                 <ItemsHeader
@@ -795,7 +797,7 @@ const MultyTab: React.FC<MultyTabProps> = ({ userList, onHasItemsChange, header 
     );
 };
 
-const styles = StyleSheet.create({
+const styles = appStyles({
     popoverContainer: {
         position: 'absolute',
         borderRadius: 16,
@@ -849,8 +851,8 @@ const styles = StyleSheet.create({
         flexShrink: 1,
     },
     popoverConfirmButton: {
-        minHeight: 44,
-        borderRadius: 22,
+        minHeight: BUTTON.smallHeight,
+        borderRadius: BUTTON.smallRadius,
         justifyContent: 'center',
         alignItems: 'center',
         marginTop: 10,

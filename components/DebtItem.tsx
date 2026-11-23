@@ -2,6 +2,7 @@ import React, { useRef, forwardRef, useImperativeHandle, useState } from 'react'
 import { StyleSheet, View, TextInput, TouchableOpacity, Text } from 'react-native';
 import Icon from '@/components/ui/Icon';
 import { useAppTheme } from '../contexts/ThemeContext';
+import { appStyles } from '@/utils/appStyles';
 
 export interface DebtItemComponentProps {
     id: string;
@@ -25,7 +26,6 @@ const DebtItemComponent = forwardRef<{ focusDescription: () => void }, DebtItemC
     onTextChange,
     onNumChange,
     onDelete,
-    isLast,
     isOnly,
     onAdd,
     onSplit,
@@ -51,15 +51,14 @@ const DebtItemComponent = forwardRef<{ focusDescription: () => void }, DebtItemC
         }
     }));
 
-    // Enter у полі опису одразу створює нову позицію; клавіатура лишається відкритою
+    // Enter в описі переводить курсор у суму цієї ж позиції,
+    // а Enter у сумі створює нову позицію і ставить курсор у її опис. Клавіатура весь час лишається відкритою
     const handleDescriptionSubmit = () => {
-        onAdd();
+        amountInputRef.current?.focus();
     };
 
     const handleAmountSubmit = () => {
-        if (isLast) {
-            onAdd();
-        }
+        onAdd();
     };
 
     if (isViewMode) {
@@ -77,7 +76,7 @@ const DebtItemComponent = forwardRef<{ focusDescription: () => void }, DebtItemC
                     <Text style={[styles.viewText, { color: colors.text, fontSize: 14 * textScale }]} numberOfLines={2}>
                         {text || 'Без опису'}
                     </Text>
-                    <Text style={[styles.viewAmount, { color: colors.text, fontSize: 15 * textScale }]}>
+                    <Text style={[styles.viewAmount, { color: colors.text, fontSize: 16 * textScale }]}>
                         {isAmountEmpty ? '0' : num} {currencySymbol}
                     </Text>
                 </View>
@@ -138,6 +137,8 @@ const DebtItemComponent = forwardRef<{ focusDescription: () => void }, DebtItemC
                             onNumChange(formattedValue);
                         }}
                         onSubmitEditing={handleAmountSubmit}
+                        submitBehavior="submit"
+                        returnKeyType="next"
                         onFocus={() => setIsAmountFocused(true)}
                         onBlur={() => setIsAmountFocused(false)}
                         pointerEvents={isAmountFocused ? 'auto' : 'none'}
@@ -198,7 +199,7 @@ const DebtItemComponent = forwardRef<{ focusDescription: () => void }, DebtItemC
 
 DebtItemComponent.displayName = 'DebtItemComponent';
 
-const styles = StyleSheet.create({
+const styles = appStyles({
     debtItemContainer: {
         flexDirection: 'row',
         alignItems: 'center',

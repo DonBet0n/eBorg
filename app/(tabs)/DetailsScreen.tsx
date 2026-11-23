@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { View, FlatList, Text, StyleSheet, RefreshControl, TouchableOpacity } from 'react-native';
+import { View, FlatList, Text, RefreshControl, TouchableOpacity } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import DebtCard from '../../components/DetailsScreen/DebtCard';
@@ -9,6 +9,8 @@ import Icon from '@/components/ui/Icon';
 import { useFirebase } from '../../contexts/FirebaseContext';
 import { useAppTheme } from '../../contexts/ThemeContext';
 import { formatAmount, pluralize, PAYMENT_TEXT, PAYMENT_TYPE } from '../../utils/debtCalculations';
+import { appStyles } from '@/utils/appStyles';
+import { BUTTON } from '@/constants/Theme';
 
 interface OpenSheet {
   userId: string;
@@ -73,13 +75,28 @@ const DetailsScreen = () => {
     notifyUser(active.userId, PAYMENT_TEXT, `${user.name}: повернення ${formatAmount(amount)} ${currencySymbol}`);
   };
 
+  // Відхилені записи зникають в обох; друг має дізнатися, що саме прибрали
+  const handleReject = async (ids: string[]) => {
+    if (!user || !active) return;
+    const otherUserId = active.userId;
+    const rejected = active.items.filter(item => ids.includes(item.id));
+    await removeDebts(ids);
+    const count = rejected.length;
+    const total = rejected.reduce((sum, item) => sum + item.amount, 0);
+    notifyUser(
+      otherUserId,
+      'eBorg',
+      `${user.name}: відхилено ${count} ${pluralize(count, 'запис', 'записи', 'записів')} на ${formatAmount(total)} ${currencySymbol}`,
+    );
+  };
+
   const totalBalance = people.reduce((sum, person) => sum + (person.totalAmount || 0), 0);
 
   const renderHeader = () => (
     <View style={styles.header}>
       <Text accessibilityRole="header" style={[styles.title, { color: colors.text, fontSize: 28 * textScale }]}>Деталі</Text>
       {people.length > 0 && (
-        <Text style={[styles.subtitle, { color: colors.textSecondary, fontSize: 14 * textScale }]}>
+        <Text style={[styles.subtitle, { color: colors.textSecondary, fontSize: 16 * textScale }]}>
           {people.length} {pluralize(people.length, 'людина', 'людини', 'людей')} · загалом{' '}
           <Text style={{ color: Math.abs(totalBalance) < 0.005 ? colors.textSecondary : totalBalance > 0 ? colors.positiveText : colors.negativeText }}>
             {totalBalance > 0 ? '+' : ''}{formatAmount(totalBalance)} {currencySymbol}
@@ -156,13 +173,13 @@ const DetailsScreen = () => {
         onChangeView={view => setSheet(prev => (prev ? { ...prev, view } : prev))}
         onClose={() => setSheet(null)}
         onPay={handlePay}
-        onReject={removeDebts}
+        onReject={handleReject}
       />
     </View>
   );
 };
 
-const styles = StyleSheet.create({
+const styles = appStyles({
   container: {
     flex: 1,
   },
@@ -219,9 +236,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    minHeight: 48,
-    paddingHorizontal: 20,
-    borderRadius: 12,
+    minHeight: BUTTON.height,
+    paddingHorizontal: 24,
+    borderRadius: BUTTON.radius,
   },
   emptyButtonText: {
     fontSize: 16,

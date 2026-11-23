@@ -1,23 +1,22 @@
 import React, { useEffect, useRef } from 'react';
 import { Animated, Easing, Image, StyleSheet, View, useWindowDimensions } from 'react-native';
 
-// Розмитий радіальний градієнт без нативних модулів: стос концентричних кіл із малою прозорістю.
-// Накладаючись, вони дають м'який перехід від яскравого центру до прозорого краю,
-// а шум зверху ховає сходинки між колами.
-const RINGS = 32;
-// Приглушене світло: у центрі плями ~16% білого
-const RING_OPACITY = 0.0055;
+// М'яке кольорове світло без нативних модулів: стос концентричних кіл із малою прозорістю.
+// Накладаючись, вони дають плавний перехід від яскравого центру до прозорого краю,
+// а шум зверху ховає сходинки між колами і додає фактуру «паперу».
+const RINGS = 28;
 
 interface BlobProps {
   size: number;
   color: string;
   x: number;
   y: number;
+  ringOpacity: number;
   // Куди і за скільки мілісекунд пляма пливе туди-назад
   drift: { x: number; y: number; duration: number };
 }
 
-const Blob = ({ size, color, x, y, drift }: BlobProps) => {
+const Blob = ({ size, color, x, y, ringOpacity, drift }: BlobProps) => {
   const progress = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -31,7 +30,7 @@ const Blob = ({ size, color, x, y, drift }: BlobProps) => {
 
   const translateX = progress.interpolate({ inputRange: [0, 1], outputRange: [0, drift.x] });
   const translateY = progress.interpolate({ inputRange: [0, 1], outputRange: [0, drift.y] });
-  const scale = progress.interpolate({ inputRange: [0, 1], outputRange: [1, 1.06] });
+  const scale = progress.interpolate({ inputRange: [0, 1], outputRange: [1, 1.08] });
 
   return (
     <Animated.View
@@ -52,7 +51,7 @@ const Blob = ({ size, color, x, y, drift }: BlobProps) => {
               height: ringSize,
               borderRadius: ringSize / 2,
               backgroundColor: color,
-              opacity: RING_OPACITY,
+              opacity: ringOpacity,
             }}
           />
         );
@@ -61,14 +60,25 @@ const Blob = ({ size, color, x, y, drift }: BlobProps) => {
   );
 };
 
-export default function AnimatedBackdrop() {
-  // Одне джерело, як студійне світло: велика м'яка пляма зверху над гаманцем, що ледь помітно дихає.
-  // Розміри в частках екрана, щоб на будь-якому телефоні лежало однаково
+// Фон екрана входу: м'яке біле світло зверху, як студійне освітлення
+export default function AuthBackdrop({ isDark }: { isDark: boolean }) {
   const { width: w, height: h } = useWindowDimensions();
+  const strength = isDark ? 1 : 0.6;
   return (
     <View style={StyleSheet.absoluteFill} pointerEvents="none">
-      <Blob size={w * 1.7} color="#FFFFFF" x={w * 0.5} y={h * 0.28} drift={{ x: w * 0.06, y: h * 0.03, duration: 8000 }} />
-      <Image source={require('../../assets/images/noise.png')} resizeMode="repeat" style={styles.noise} />
+      <Blob
+        size={w * 1.6}
+        color="#FFFFFF"
+        x={w * 0.5}
+        y={h * 0.08}
+        ringOpacity={0.007 * strength}
+        drift={{ x: w * 0.05, y: h * 0.03, duration: 9000 }}
+      />
+      <Image
+        source={require('../../assets/images/noise.png')}
+        resizeMode="repeat"
+        style={[styles.noise, { opacity: isDark ? 1 : 0.5 }]}
+      />
     </View>
   );
 }

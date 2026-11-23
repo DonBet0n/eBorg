@@ -1,14 +1,18 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, Alert, ActivityIndicator } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, ActivityIndicator } from 'react-native';
 import BottomSheet from '@/components/ui/BottomSheet';
 import Avatar from '@/components/ui/Avatar';
 import Icon from '@/components/ui/Icon';
 import { Transaction } from '../../types/debt';
-import { formatAmount, pluralize, PAYMENT_TEXT } from '../../utils/debtCalculations';
+import { formatAmount, isValidDebtAmount, pluralize, PAYMENT_TEXT } from '../../utils/debtCalculations';
 import { useAppTheme } from '../../contexts/ThemeContext';
 import { useFirebase } from '../../contexts/FirebaseContext';
 import { GroupedTransaction } from './types';
+import { formatDate } from '../../utils/date';
 import { balanceStatus } from './DebtCard';
+import { appStyles } from '@/utils/appStyles';
+import { appAlert } from '@/components/ui/AppDialog';
+import { BUTTON } from '@/constants/Theme';
 
 export type SheetView = 'history' | 'select' | 'pay';
 
@@ -38,7 +42,7 @@ const DebtSheet: React.FC<DebtSheetProps> = ({
     visible, view, fromHistory, userName, userAvatar, groups, totalAmount, onChangeView, onClose, onPay, onReject,
 }) => {
     const { user } = useFirebase();
-    const { colors, isDark, textScale, currencySymbol, detailsBlockSize } = useAppTheme();
+    const { colors, isDark, textScale, currencySymbol } = useAppTheme();
     const surface = isDark ? colors.card : colors.cardAlt;
     // colors.border майже зливається з сірою карткою, тому гілка трохи темніша
     const threadColor = isDark ? '#4A4A4A' : '#C8C8C8';
@@ -70,8 +74,8 @@ const DebtSheet: React.FC<DebtSheetProps> = ({
     const canPay = totalAmount < 0;
     const amountColor = isSettled ? colors.textSecondary : totalAmount > 0 ? colors.positiveText : colors.negativeText;
 
-    const padding = detailsBlockSize === 'small' ? 8 : detailsBlockSize === 'large' ? 16 : 12;
-    const itemSize = (detailsBlockSize === 'small' ? 14 : detailsBlockSize === 'large' ? 18 : 16) * textScale;
+    const padding = 12;
+    const itemSize = 16 * textScale;
 
     // ---------- Пошук ----------
     const query = searchQuery.trim().toLowerCase();
@@ -122,7 +126,7 @@ const DebtSheet: React.FC<DebtSheetProps> = ({
 
     const confirmReject = () => {
         const count = selected.length;
-        Alert.alert(
+        appAlert(
             `Відхилити ${count} ${pluralize(count, 'запис', 'записи', 'записів')}?`,
             `Їх буде видалено у вас і в ${userName}. Цю дію не можна скасувати.`,
             [
@@ -138,7 +142,7 @@ const DebtSheet: React.FC<DebtSheetProps> = ({
                             if (isAllSelected) onClose();
                             else onChangeView('history');
                         } catch {
-                            Alert.alert('Помилка', 'Не вдалося відхилити записи. Спробуйте ще раз.');
+                            appAlert('Помилка', 'Не вдалося відхилити записи. Спробуйте ще раз.');
                         } finally {
                             setIsBusy(false);
                         }
@@ -150,7 +154,7 @@ const DebtSheet: React.FC<DebtSheetProps> = ({
 
     // ---------- Оплата ----------
     const amount = Number(paymentAmount);
-    const hasAmount = paymentAmount.length > 0 && amount > 0;
+    const hasAmount = paymentAmount.length > 0 && isValidDebtAmount(amount);
     const isTooMuch = hasAmount && amount - debtAbs > 0.005;
     const canSubmitPayment = hasAmount && !isTooMuch && !isBusy;
 
@@ -170,7 +174,7 @@ const DebtSheet: React.FC<DebtSheetProps> = ({
             if (fromHistory) onChangeView('history');
             else onClose();
         } catch {
-            Alert.alert('Помилка', 'Не вдалося записати оплату. Спробуйте ще раз.');
+            appAlert('Помилка', 'Не вдалося записати оплату. Спробуйте ще раз.');
         } finally {
             setIsBusy(false);
         }
@@ -205,7 +209,7 @@ const DebtSheet: React.FC<DebtSheetProps> = ({
                     {isSelecting ? renderCheckbox(checked) : <Icon name="success" size={20} color={colors.iconSecondary} />}
                     <View style={styles.flex}>
                         <Text style={[styles.paymentTitle, { color: colors.text, fontSize: itemSize }]}>{PAYMENT_TEXT}</Text>
-                        <Text style={[styles.meta, { color: colors.textSecondary }]}>{new Date(group.date).toLocaleDateString()}</Text>
+                        <Text style={[styles.meta, { color: colors.textSecondary }]}>{formatDate(group.date)}</Text>
                     </View>
                     <Text style={[styles.amount, { color: colors.text, fontSize: itemSize }]}>
                         {formatAmount(Math.abs(group.totalAmount))} {currencySymbol}
@@ -240,7 +244,7 @@ const DebtSheet: React.FC<DebtSheetProps> = ({
                     {isSelecting && <View style={[styles.checkboxMask, { backgroundColor: surface }]}>{renderCheckbox(groupChecked)}</View>}
                     <View style={styles.flex}>
                         <Text style={[styles.groupDate, { color: colors.text, fontSize: itemSize }]}>
-                            {new Date(group.date).toLocaleDateString()}
+                            {formatDate(group.date)}
                         </Text>
                         <Text style={[styles.meta, { color: colors.textSecondary }]}>
                             {count} {pluralize(count, 'позиція', 'позиції', 'позицій')}
@@ -378,7 +382,7 @@ const DebtSheet: React.FC<DebtSheetProps> = ({
                     disabled={isBusy}
                     accessibilityRole="button"
                 >
-                    <Text style={[styles.footerText, { color: secondary.danger ? colors.negativeText : colors.text }]}>{secondary.label}</Text>
+                    <Text style={[styles.footerText, { color: secondary.danger ? colors.negativeText : colors.text }]} numberOfLines={1}>{secondary.label}</Text>
                 </TouchableOpacity>
             )}
             {primary && (
@@ -394,7 +398,7 @@ const DebtSheet: React.FC<DebtSheetProps> = ({
                     accessibilityState={{ disabled: !!primary.disabled }}
                 >
                     {isBusy ? <ActivityIndicator color="#fff" /> : (
-                        <Text style={[styles.footerText, { color: primary.danger ? '#fff' : colors.buttonText }]}>{primary.label}</Text>
+                        <Text style={[styles.footerText, { color: primary.danger ? '#fff' : colors.buttonText }]} numberOfLines={1} adjustsFontSizeToFit>{primary.label}</Text>
                     )}
                 </TouchableOpacity>
             )}
@@ -406,7 +410,7 @@ const DebtSheet: React.FC<DebtSheetProps> = ({
             <View style={[styles.summary, { backgroundColor: surface }]}>
                 <Avatar uri={userAvatar} name={userName} size={48} />
                 <View style={styles.flex}>
-                    <Text style={[styles.meta, { color: colors.textSecondary, fontSize: 13 * textScale }]}>{balanceStatus(totalAmount)}</Text>
+                    <Text style={[styles.meta, { color: colors.textSecondary, fontSize: 14 * textScale }]}>{balanceStatus(totalAmount)}</Text>
                     <Text style={[styles.summaryAmount, { color: amountColor, fontSize: 24 * textScale }]}>
                         {totalAmount > 0 ? '+' : ''}{formatAmount(totalAmount)} {currencySymbol}
                     </Text>
@@ -415,7 +419,7 @@ const DebtSheet: React.FC<DebtSheetProps> = ({
             {renderSearch()}
             {renderList()}
             {renderFooter(
-                allIds.length > 0 ? { label: 'Відхилити записи', onPress: () => onChangeView('select'), danger: true } : null,
+                allIds.length > 0 ? { label: 'Відхилити', onPress: () => onChangeView('select'), danger: true } : null,
                 canPay ? { label: 'Сплатити', onPress: () => onChangeView('pay') } : null,
             )}
         </>
@@ -457,7 +461,7 @@ const DebtSheet: React.FC<DebtSheetProps> = ({
             <View style={[styles.summary, { backgroundColor: surface }]}>
                 <Avatar uri={userAvatar} name={userName} size={48} />
                 <View style={styles.flex}>
-                    <Text style={[styles.meta, { color: colors.textSecondary, fontSize: 13 * textScale }]} numberOfLines={1}>
+                    <Text style={[styles.meta, { color: colors.textSecondary, fontSize: 14 * textScale }]} numberOfLines={1}>
                         Ви винні {userName}
                     </Text>
                     <Text style={[styles.summaryAmount, { color: colors.negativeText, fontSize: 24 * textScale }]}>
@@ -532,7 +536,7 @@ const DebtSheet: React.FC<DebtSheetProps> = ({
 
 export default DebtSheet;
 
-const styles = StyleSheet.create({
+const styles = appStyles({
     flex: {
         flex: 1,
     },
@@ -551,7 +555,7 @@ const styles = StyleSheet.create({
         marginTop: 2,
     },
     meta: {
-        fontSize: 13,
+        fontSize: 14,
         fontFamily: 'NunitoSans',
         letterSpacing: 0.3,
     },
@@ -567,7 +571,7 @@ const styles = StyleSheet.create({
     },
     searchInput: {
         flex: 1,
-        fontSize: 15,
+        fontSize: 16,
         fontFamily: 'NunitoSans',
         letterSpacing: 0.3,
         paddingVertical: 8,
@@ -652,7 +656,7 @@ const styles = StyleSheet.create({
         letterSpacing: 0.3,
     },
     itemAmount: {
-        fontFamily: 'NunitoSans',
+        fontFamily: 'NunitoSansBold',
         letterSpacing: 0.3,
         fontVariant: ['tabular-nums'],
     },
@@ -673,12 +677,12 @@ const styles = StyleSheet.create({
         paddingVertical: 32,
     },
     emptyText: {
-        fontSize: 15,
+        fontSize: 16,
         fontFamily: 'NunitoSans',
         letterSpacing: 0.3,
     },
     hint: {
-        fontSize: 14,
+        fontSize: 16,
         fontFamily: 'NunitoSans',
         letterSpacing: 0.3,
         marginBottom: 12,
@@ -690,12 +694,12 @@ const styles = StyleSheet.create({
         marginBottom: 8,
     },
     selectCount: {
-        fontSize: 15,
+        fontSize: 16,
         fontFamily: 'NunitoSansBold',
         letterSpacing: 0.3,
     },
     selectAll: {
-        fontSize: 15,
+        fontSize: 16,
         fontFamily: 'NunitoSans',
         letterSpacing: 0.3,
         textDecorationLine: 'underline',
@@ -756,8 +760,8 @@ const styles = StyleSheet.create({
     },
     footerButton: {
         flex: 1,
-        minHeight: 52,
-        borderRadius: 12,
+        minHeight: BUTTON.height,
+        borderRadius: BUTTON.radius,
         justifyContent: 'center',
         alignItems: 'center',
         paddingHorizontal: 8,

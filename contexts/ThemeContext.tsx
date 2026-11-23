@@ -2,9 +2,9 @@ import React, { createContext, useContext, useState, useEffect, useCallback, use
 import { useColorScheme as useDeviceColorScheme } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Colors, ThemeColors } from '../constants/Colors';
+import { CORNER_SCALE_DEFAULT, CORNER_SCALE_MAX, CORNER_SCALE_MIN, setStyleScales } from '../utils/appStyles';
 
 export type ThemeType = 'light' | 'dark' | 'system';
-export type DetailsBlockSizeType = 'small' | 'medium' | 'large';
 
 interface ThemeContextProps {
   theme: ThemeType;
@@ -13,16 +13,15 @@ interface ThemeContextProps {
   setTheme: (theme: ThemeType) => void;
   textScale: number;
   setTextScale: (val: number) => void;
-  detailsBlockSize: DetailsBlockSizeType;
-  setDetailsBlockSize: (val: DetailsBlockSizeType) => void;
   showDecimalsBalance: boolean;
   setShowDecimalsBalance: (val: boolean) => void;
   showDecimalsStatistics: boolean;
   setShowDecimalsStatistics: (val: boolean) => void;
-  wrapStatisticsText: boolean;
-  setWrapStatisticsText: (val: boolean) => void;
   currencySymbol: string;
   setCurrencySymbol: (val: string) => void;
+  // Множник заокруглення кутів (див. utils/radius)
+  cornerScale: number;
+  setCornerScale: (val: number) => void;
   resetToDefaults: () => void;
 }
 
@@ -32,11 +31,10 @@ export const AppThemeProvider = ({ children }: { children: React.ReactNode }) =>
   const deviceTheme = useDeviceColorScheme();
   const [theme, setThemeState] = useState<ThemeType>('system');
   const [textScale, setTextScaleState] = useState<number>(1.0);
-  const [detailsBlockSize, setDetailsBlockSizeState] = useState<DetailsBlockSizeType>('medium');
   const [showDecimalsBalance, setShowDecimalsBalanceState] = useState<boolean>(true);
   const [showDecimalsStatistics, setShowDecimalsStatisticsState] = useState<boolean>(true);
-  const [wrapStatisticsText, setWrapStatisticsTextState] = useState<boolean>(false);
   const [currencySymbol, setCurrencySymbolState] = useState<string>('грн');
+  const [cornerScale, setCornerScaleState] = useState<number>(CORNER_SCALE_DEFAULT);
   const [isLoaded, setIsLoaded] = useState(false);
 
   useEffect(() => {
@@ -52,9 +50,9 @@ export const AppThemeProvider = ({ children }: { children: React.ReactNode }) =>
         
         // Вибір кольору прибрано: старе збережене значення більше не потрібне
         AsyncStorage.removeItem('@app_accent').catch(() => {});
+        // Так само прибрані налаштування розміру блоків і переносу тексту
+        AsyncStorage.multiRemove(['@app_block_size', '@app_wrap_stat_text']).catch(() => {});
         
-        const savedBlockSize = await AsyncStorage.getItem('@app_block_size');
-        if (savedBlockSize) setDetailsBlockSizeState(savedBlockSize as DetailsBlockSizeType);
 
         const savedDecimalsBalance = await AsyncStorage.getItem('@app_decimals_balance');
         if (savedDecimalsBalance !== null) setShowDecimalsBalanceState(savedDecimalsBalance === 'true');
@@ -62,11 +60,12 @@ export const AppThemeProvider = ({ children }: { children: React.ReactNode }) =>
         const savedDecimalsStat = await AsyncStorage.getItem('@app_decimals_stat');
         if (savedDecimalsStat !== null) setShowDecimalsStatisticsState(savedDecimalsStat === 'true');
 
-        const savedWrapStatText = await AsyncStorage.getItem('@app_wrap_stat_text');
-        if (savedWrapStatText !== null) setWrapStatisticsTextState(savedWrapStatText === 'true');
 
         const savedCurrencySymbol = await AsyncStorage.getItem('@app_currency_symbol');
         if (savedCurrencySymbol !== null) setCurrencySymbolState(savedCurrencySymbol);
+
+        const savedCornerScale = parseFloat(await AsyncStorage.getItem('@app_corner_scale') ?? '');
+        if (savedCornerScale >= CORNER_SCALE_MIN && savedCornerScale <= CORNER_SCALE_MAX) setCornerScaleState(savedCornerScale);
       } catch (e) {
         console.error('Failed to load settings', e);
       } finally {
@@ -91,11 +90,6 @@ export const AppThemeProvider = ({ children }: { children: React.ReactNode }) =>
     persist('@app_density', val.toString());
   }, []);
 
-  const setDetailsBlockSize = useCallback((val: DetailsBlockSizeType) => {
-    setDetailsBlockSizeState(val);
-    persist('@app_block_size', val);
-  }, []);
-
   const setShowDecimalsBalance = useCallback((val: boolean) => {
     setShowDecimalsBalanceState(val);
     persist('@app_decimals_balance', val.toString());
@@ -106,27 +100,27 @@ export const AppThemeProvider = ({ children }: { children: React.ReactNode }) =>
     persist('@app_decimals_stat', val.toString());
   }, []);
 
-  const setWrapStatisticsText = useCallback((val: boolean) => {
-    setWrapStatisticsTextState(val);
-    persist('@app_wrap_stat_text', val.toString());
-  }, []);
-
   const setCurrencySymbol = useCallback((val: string) => {
     setCurrencySymbolState(val);
     persist('@app_currency_symbol', val);
   }, []);
 
+  const setCornerScale = useCallback((val: number) => {
+    setCornerScaleState(val);
+    persist('@app_corner_scale', val.toString());
+  }, []);
+
   const resetToDefaults = useCallback(() => {
     setThemeState('system');
     setTextScaleState(1.0);
-    setDetailsBlockSizeState('medium');
     setShowDecimalsBalanceState(true);
     setShowDecimalsStatisticsState(true);
-    setWrapStatisticsTextState(false);
     setCurrencySymbolState('грн');
+    setCornerScaleState(CORNER_SCALE_DEFAULT);
     AsyncStorage.multiRemove([
-      '@app_theme', '@app_density', '@app_block_size',
-      '@app_decimals_balance', '@app_decimals_stat', '@app_wrap_stat_text', '@app_currency_symbol'
+      '@app_theme', '@app_density',
+      '@app_decimals_balance', '@app_decimals_stat', '@app_currency_symbol',
+      '@app_corner_scale',
     ]).catch(() => {});
   }, []);
 
@@ -134,20 +128,22 @@ export const AppThemeProvider = ({ children }: { children: React.ReactNode }) =>
 
   const colors: ThemeColors = isDark ? Colors.dark : Colors.light;
 
+  // Стилі з appStyles читають множник під час рендеру, тож він має бути виставлений раніше за екрани
+  setStyleScales(cornerScale, textScale);
+
   const value = useMemo<ThemeContextProps>(() => ({
     theme, isDark, colors, setTheme,
     textScale, setTextScale,
-    detailsBlockSize, setDetailsBlockSize,
     showDecimalsBalance, setShowDecimalsBalance,
     showDecimalsStatistics, setShowDecimalsStatistics,
-    wrapStatisticsText, setWrapStatisticsText,
     currencySymbol, setCurrencySymbol,
+    cornerScale, setCornerScale,
     resetToDefaults
   }), [
-    theme, isDark, colors, textScale, detailsBlockSize,
-    showDecimalsBalance, showDecimalsStatistics, wrapStatisticsText, currencySymbol,
-    setTheme, setTextScale, setDetailsBlockSize, setShowDecimalsBalance,
-    setShowDecimalsStatistics, setWrapStatisticsText, setCurrencySymbol, resetToDefaults,
+    theme, isDark, colors, textScale,
+    showDecimalsBalance, showDecimalsStatistics, currencySymbol, cornerScale,
+    setTheme, setTextScale, setShowDecimalsBalance,
+    setShowDecimalsStatistics, setCurrencySymbol, setCornerScale, resetToDefaults,
   ]);
 
   if (!isLoaded) return null;

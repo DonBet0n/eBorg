@@ -2,12 +2,13 @@ import React, { createContext, useContext, useState, useCallback, useEffect, use
 import auth from '@react-native-firebase/auth';
 import firestore, { FirebaseFirestoreTypes } from '@react-native-firebase/firestore';
 import NetInfo from '@react-native-community/netinfo';
-import { Alert, AppState } from 'react-native';
+import { AppState } from 'react-native';
 import { User, Statistics, DebtGroup, Transaction } from '../types/debt';
-import { calculateDebts, isPaymentRecord } from '../utils/debtCalculations';
+import { calculateDebts, isPaymentRecord, isValidDebtAmount } from '../utils/debtCalculations';
 import { registerForPushNotificationsAsync, sendPushNotification } from '../utils/pushNotifications';
 import { devLog } from '../utils/logger';
 import { readJson, writeJson } from '../utils/localCache';
+import { appAlert } from '@/components/ui/AppDialog';
 
 /*
  * Синхронізація даних:
@@ -24,6 +25,8 @@ const DIRECTIONS: Direction[] = ['fromUserId', 'toUserId'];
 
 // Запас на випадок, якщо записи з близькими серверними мітками часу стали видимі не по порядку
 const SYNC_OVERLAP_MS = 2 * 60 * 1000;
+// Довше за це індикатор першої синхронізації не крутиться, навіть якщо сервер мовчить
+const INITIAL_SYNC_TIMEOUT_MS = 20 * 1000;
 // Як часто перевіряти видалення при поверненні в застосунок
 const VERIFY_THROTTLE_MS = 60 * 1000;
 const CACHE_VERSION = 1;
@@ -83,6 +86,8 @@ export type FirebaseContextType = {
   isOnline: boolean;
   fullSync: () => Promise<void>;
   dataSource: 'cache' | 'server' | 'unknown';
+  // Іде синхронізація з сервером (перша після запуску, свайп-оновлення або повна) — для індикатора в шапці
+  isSyncing: boolean;
   createDebts: (debts: NewDebt[]) => Promise<void>;
   removeDebts: (ids: string[]) => Promise<void>;
   notifyUser: (userId: string, title: string, body: string) => Promise<void>;
@@ -110,6 +115,7 @@ export const FirebaseContext = createContext<FirebaseContextType>({
   isOnline: true,
   fullSync: async () => {},
   dataSource: 'unknown',
+  isSyncing: false,
   createDebts: async () => {},
   removeDebts: async () => {},
   notifyUser: async () => {},
@@ -158,6 +164,10 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
   const isOnlineRef = useRef(true);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
   const [dataSource, setDataSource] = useState<'cache' | 'server' | 'unknown'>('unknown');
+  // Перша синхронізація боргів після входу ще не підтвердилась сервером
+  const [initialSyncPending, setInitialSyncPending] = useState(false);
+  // Скільки ручних оновлень (свайп, «Оновити з сервера») зараз триває
+  const [manualSyncs, setManualSyncs] = useState(0);
 
   // Дані тримаються в ref, а зміна *Version перераховує похідні значення
   const debtsCacheRef = useRef<DebtsCache | null>(null);
@@ -302,43 +312,65 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
     return undefined;
   }, []);
 
+  // Власний профіль. Спершу — з локального кешу Firestore, щоб застосунок і борги з кешу відкривались
+  // одразу, без очікування сервера; свіжа версія з сервера підтягується у фоні.
+  // Без кешу (перший вхід на пристрої) чекаємо звичайний запит.
+  const profileLoadRef = useRef<{ userId: string; promise: Promise<User | null> } | null>(null);
+  const loadOwnProfile = useCallback((userId: string): Promise<User | null> => {
+    // На старті профіль просять одночасно обробник входу і екран входу — робимо це один раз
+    if (profileLoadRef.current?.userId === userId) return profileLoadRef.current.promise;
+
+    const ref = firestore().collection('users').doc(userId);
+    const apply = (raw: FirebaseFirestoreTypes.DocumentData) => {
+      const userData = { id: userId, ...raw } as User;
+      setUser(userData);
+      upsertUsers([parseUser(userId, raw)]);
+      // Не чекаємо: push-токен (мережевий запит до Expo) не має затримувати старт
+      syncPushToken(userId, userData.expoPushToken).then(token => {
+        if (token) setUser(prev => (prev?.id === userId ? { ...prev, expoPushToken: token } : prev));
+      });
+      return userData;
+    };
+
+    const load = async (): Promise<User | null> => {
+      const cached = await ref.get({ source: 'cache' }).then(doc => doc.data() ?? null).catch(() => null);
+      if (cached) {
+        ref.get({ source: 'server' })
+          .then(doc => {
+            const fresh = doc.data();
+            if (fresh && auth().currentUser?.uid === userId) apply(fresh);
+          })
+          .catch(e => devLog('Profile refresh error:', e));
+        return apply(cached);
+      }
+      const raw = (await ref.get()).data();
+      return raw ? apply(raw) : null;
+    };
+
+    const promise = load().finally(() => {
+      if (profileLoadRef.current?.promise === promise) profileLoadRef.current = null;
+    });
+    profileLoadRef.current = { userId, promise };
+    return promise;
+  }, [upsertUsers, syncPushToken]);
+
   useEffect(() => {
     const unsubscribe = auth().onAuthStateChanged(async (firebaseUser) => {
       if (firebaseUser) {
-        const userDoc = await firestore().collection('users').doc(firebaseUser.uid).get();
-        const userDataRaw = userDoc.data();
-        if (userDataRaw) {
-          const userData = { id: firebaseUser.uid, ...userDataRaw } as User;
-
-          const token = await syncPushToken(firebaseUser.uid, userData.expoPushToken);
-          if (token) userData.expoPushToken = token;
-
-          setUser(userData);
-          upsertUsers([parseUser(firebaseUser.uid, userDataRaw)]);
-        }
+        await loadOwnProfile(firebaseUser.uid);
       } else {
         pushTokenSyncedRef.current = null;
         setUser(null);
       }
     });
     return () => unsubscribe();
-  }, [upsertUsers, syncPushToken]);
+  }, [loadOwnProfile]);
 
   const getCurrentUser = useCallback(async () => {
     const firebaseUser = auth().currentUser;
     if (!firebaseUser) return null;
-    const userDoc = await firestore().collection('users').doc(firebaseUser.uid).get();
-    const userDataRaw = userDoc.data();
-    if (userDataRaw) {
-      const userData = { id: firebaseUser.uid, ...userDataRaw } as User;
-      setUser(userData);
-      upsertUsers([parseUser(firebaseUser.uid, userDataRaw)]);
-      // Не чекаємо: запит дозволу на сповіщення не має затримувати вхід
-      syncPushToken(firebaseUser.uid, userData.expoPushToken);
-      return userData;
-    }
-    return null;
-  }, [upsertUsers, syncPushToken]);
+    return loadOwnProfile(firebaseUser.uid);
+  }, [loadOwnProfile]);
 
   const logout = useCallback(async () => {
     await auth().signOut();
@@ -412,6 +444,7 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
         serverSynced[field] = true;
 
         if (serverSynced.fromUserId && serverSynced.toUserId) {
+          setInitialSyncPending(false);
           setDataSource('server');
           setLastUpdate(new Date(cache.lastServerContact));
         }
@@ -446,6 +479,8 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
           // Немає складеного індексу (field + updatedAt) — працюємо повним запитом, щоб нічого не зламалось
           if (since !== null && error?.code === 'firestore/failed-precondition') {
             subscribe(field, null);
+          } else {
+            setInitialSyncPending(false);
           }
         }
       );
@@ -500,11 +535,17 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
       setLastUpdate(cache.lastServerContact ? new Date(cache.lastServerContact) : null);
       setDebtsVersion(v => v + 1);
 
+      setInitialSyncPending(true);
       DIRECTIONS.forEach(field => subscribe(field, cache!.lastSync[field]));
     })();
 
+    // Запобіжник: якщо сервер так і не відповів (помилка, обрив), індикатор не крутиться вічно
+    const syncTimeout = setTimeout(() => setInitialSyncPending(false), INITIAL_SYNC_TIMEOUT_MS);
+
     return () => {
       cancelled = true;
+      clearTimeout(syncTimeout);
+      setInitialSyncPending(false);
       verifyDeletionsRef.current = null;
       DIRECTIONS.forEach(field => listeners[field]?.());
       persistDebtsNow();
@@ -620,6 +661,10 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
 
   const createDebts = useCallback(async (newDebts: NewDebt[]) => {
     if (newDebts.length === 0) return;
+    // Остання лінія захисту: хоч би звідки прийшов запис, у базу не потрапить борг на нуль чи мінус
+    if (newDebts.some(debt => !isValidDebtAmount(debt.amount))) {
+      throw new Error('Сума боргу має бути більшою за нуль');
+    }
     const cache = debtsCacheRef.current;
     const batch = firestore().batch();
     const now = Date.now();
@@ -699,23 +744,27 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
   // і перевіряє, чи не видаляли борги
   const refreshDebts = useCallback(async () => {
     if (!isOnlineRef.current) return;
+    setManualSyncs(n => n + 1);
     try {
       lastVerifyRef.current = Date.now();
       await Promise.all([syncUsers(), verifyDeletionsRef.current?.()]);
     } catch (error) {
       devLog('Refresh error:', error);
+    } finally {
+      setManualSyncs(n => n - 1);
     }
   }, [syncUsers]);
 
   const fullSync = useCallback(async () => {
     if (!isOnlineRef.current) {
-      Alert.alert('Немає підключення', 'Синхронізація неможлива без Інтернету.');
+      appAlert('Немає підключення', 'Синхронізація неможлива без Інтернету.');
       return;
     }
     if (!uid) return;
 
     // Читаємо борги напряму з сервера, а не чекаємо подій слухача: так результат гарантований —
     // або свіжі дані, або справжня помилка замість тайм-ауту
+    setManualSyncs(n => n + 1);
     try {
       const [snaps] = await Promise.all([
         Promise.all(DIRECTIONS.map(field =>
@@ -745,12 +794,14 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
       persistDebtsNow();
       setSyncEpoch(e => e + 1);
 
-      Alert.alert('Успіх', 'Дані успішно синхронізовано з сервером!');
+      appAlert('Успіх', 'Дані успішно синхронізовано з сервером!');
     } catch (error) {
       devLog('Full sync error:', error);
       const code = (error as any)?.code;
       const details = code ? `\n\n(${code})` : '';
-      Alert.alert('Помилка', `Не вдалося синхронізуватися з сервером. Спробуйте пізніше.${details}`);
+      appAlert('Помилка', `Не вдалося синхронізуватися з сервером. Спробуйте пізніше.${details}`);
+    } finally {
+      setManualSyncs(n => n - 1);
     }
   }, [uid, syncUsers, debtsChanged, persistDebtsNow]);
 
@@ -770,6 +821,7 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
       isOnline,
       fullSync,
       dataSource,
+      isSyncing: isOnline && (initialSyncPending || manualSyncs > 0),
       createDebts,
       removeDebts,
       notifyUser,

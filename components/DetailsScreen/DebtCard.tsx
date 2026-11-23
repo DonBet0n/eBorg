@@ -5,6 +5,9 @@ import Icon from '@/components/ui/Icon';
 import { formatAmount, pluralize, PAYMENT_TEXT } from '../../utils/debtCalculations';
 import { useAppTheme } from '../../contexts/ThemeContext';
 import { GroupedTransaction } from './types';
+import { formatDate } from '../../utils/date';
+import { appStyles } from '@/utils/appStyles';
+import { BUTTON } from '@/constants/Theme';
 
 interface DebtCardProps {
     userName: string;
@@ -44,10 +47,10 @@ const DebtCard: React.FC<DebtCardProps> = ({
             <View style={styles.header}>
                 <Avatar uri={userAvatar} name={userName} size={44} />
                 <View style={styles.headerText}>
-                    <Text style={[styles.userName, { color: colors.text, fontSize: 17 * textScale }]} numberOfLines={1}>
+                    <Text style={[styles.userName, { color: colors.text, fontSize: 18 * textScale }]} numberOfLines={1}>
                         {userName}
                     </Text>
-                    <Text style={[styles.status, { color: colors.textSecondary, fontSize: 13 * textScale }]} numberOfLines={1}>
+                    <Text style={[styles.status, { color: colors.textSecondary, fontSize: 14 * textScale }]} numberOfLines={1}>
                         {balanceStatus(totalAmount)}
                     </Text>
                 </View>
@@ -63,18 +66,21 @@ const DebtCard: React.FC<DebtCardProps> = ({
                             key={index}
                             style={[styles.previewRow, index > 0 && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border }]}
                         >
-                            <Text style={[styles.previewDate, { color: colors.textSecondary, fontSize: 13 * textScale }]}>
-                                {new Date(group.date).toLocaleDateString()}
-                            </Text>
-                            <Text style={[styles.previewText, { color: colors.text, fontSize: 14 * textScale }]} numberOfLines={1}>
-                                {group.isPayment
-                                    ? PAYMENT_TEXT
-                                    : `${group.items.length} ${pluralize(group.items.length, 'позиція', 'позиції', 'позицій')}`}
-                            </Text>
+                            {/* Що і коли — двома рядками, як на головній: так нічого не обрізається на великому шрифті */}
+                            <View style={styles.previewInfo}>
+                                <Text style={[styles.previewText, { color: colors.text, fontSize: 16 * textScale }]} numberOfLines={1}>
+                                    {group.isPayment
+                                        ? PAYMENT_TEXT
+                                        : `${group.items.length} ${pluralize(group.items.length, 'позиція', 'позиції', 'позицій')}`}
+                                </Text>
+                                <Text style={[styles.previewDate, { color: colors.textSecondary, fontSize: 14 * textScale }]} numberOfLines={1}>
+                                    {formatDate(group.date)}
+                                </Text>
+                            </View>
                             <Text
                                 style={[
                                     styles.previewAmount,
-                                    { fontSize: 14 * textScale },
+                                    { fontSize: 16 * textScale },
                                     { color: group.isPayment ? colors.text : group.totalAmount > 0 ? colors.positiveText : colors.negativeText },
                                 ]}
                             >
@@ -87,7 +93,7 @@ const DebtCard: React.FC<DebtCardProps> = ({
             )}
 
             <View style={styles.moreRow}>
-                <Text style={[styles.moreText, { color: colors.textSecondary, fontSize: 13 * textScale }]}>
+                <Text style={[styles.moreText, { color: colors.textSecondary, fontSize: 14 * textScale }]}>
                     {hiddenCount > 0
                         ? `Уся історія · ще ${hiddenCount} ${pluralize(hiddenCount, 'запис', 'записи', 'записів')}`
                         : 'Уся історія'}
@@ -121,7 +127,7 @@ const DebtCard: React.FC<DebtCardProps> = ({
 
 export default DebtCard;
 
-const styles = StyleSheet.create({
+const styles = appStyles({
     container: {
         borderRadius: 20,
         padding: 16,
@@ -158,16 +164,19 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         gap: 12,
-        minHeight: 40,
+        minHeight: 52,
+        paddingVertical: 8,
+    },
+    previewInfo: {
+        flex: 1,
     },
     previewDate: {
         fontFamily: 'NunitoSans',
         letterSpacing: 0.3,
-        minWidth: 76,
+        marginTop: 2,
     },
     previewText: {
-        flex: 1,
-        fontFamily: 'NunitoSans',
+        fontFamily: 'NunitoSansBold',
         letterSpacing: 0.3,
     },
     previewAmount: {
@@ -193,8 +202,8 @@ const styles = StyleSheet.create({
     },
     actionButton: {
         flex: 1,
-        minHeight: 44,
-        borderRadius: 12,
+        minHeight: BUTTON.smallHeight,
+        borderRadius: BUTTON.smallRadius,
         justifyContent: 'center',
         alignItems: 'center',
     },

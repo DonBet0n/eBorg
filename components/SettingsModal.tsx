@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Alert, ActivityIndicator, ScrollView, Switch } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, ScrollView, Switch } from 'react-native';
 import Constants from 'expo-constants';
 import Icon, { IconName } from '@/components/ui/Icon';
 import Slider from '@react-native-community/slider';
@@ -7,6 +7,10 @@ import { useFirebase } from '../contexts/FirebaseContext';
 import { useAppTheme, ThemeType } from '../contexts/ThemeContext';
 import { Colors, ThemeColors } from '../constants/Colors';
 import BottomSheet from './ui/BottomSheet';
+import { formatClock, formatDayLabel } from '../utils/date';
+import { appStyles, scaleRadius, CORNER_SCALE_MIN, CORNER_SCALE_MAX } from '@/utils/appStyles';
+import { appAlert } from '@/components/ui/AppDialog';
+import { BUTTON } from '@/constants/Theme';
 
 interface SettingsModalProps {
   visible: boolean;
@@ -27,6 +31,26 @@ const THEMES: { value: ThemeType; label: string }[] = [
   { value: 'light', label: 'Світла' },
   { value: 'dark', label: 'Темна' },
 ];
+
+// Мініатюра для повзунка заокруглення: картка боргу, поле вводу і кнопка з потрібними кутами
+const CornerPreview = ({ scale, colors, surface }: { scale: number; colors: ThemeColors; surface: string }) => (
+  <View style={[styles.cornerPreview, { backgroundColor: colors.background, borderRadius: scaleRadius(20, scale) }]}>
+    <View style={styles.cornerPreviewTop}>
+      <View style={[styles.cornerAvatar, { backgroundColor: surface }]} />
+      <View style={styles.cornerLines}>
+        <View style={[styles.cornerLine, styles.cornerLineWide, { backgroundColor: colors.text }]} />
+        <View style={[styles.cornerLine, { backgroundColor: colors.border }]} />
+      </View>
+      <Text style={[styles.cornerAmount, { color: colors.text }]}>250 ₴</Text>
+    </View>
+    <View style={[styles.cornerField, { backgroundColor: surface, borderColor: colors.border, borderRadius: scaleRadius(12, scale) }]}>
+      <Text style={[styles.cornerFieldText, { color: colors.textSecondary }]}>Опис</Text>
+    </View>
+    <View style={[styles.cornerButton, { backgroundColor: colors.buttonBg, borderRadius: scaleRadius(26, scale) }]}>
+      <Text style={[styles.cornerButtonText, { color: colors.buttonText }]}>Повернути борг</Text>
+    </View>
+  </View>
+);
 
 const nearestScaleIndex = (scale: number) =>
   TEXT_SCALES.reduce((best, value, index) => Math.abs(value - scale) < Math.abs(TEXT_SCALES[best] - scale) ? index : best, 0);
@@ -80,6 +104,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ visible, onClose }) => {
     showDecimalsBalance, setShowDecimalsBalance,
     showDecimalsStatistics, setShowDecimalsStatistics,
     currencySymbol, setCurrencySymbol,
+    cornerScale, setCornerScale,
     resetToDefaults
   } = useAppTheme();
   const [isSyncing, setIsSyncing] = useState(false);
@@ -91,6 +116,12 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ visible, onClose }) => {
   useEffect(() => {
     setDraftIndex(scaleIndex);
   }, [scaleIndex]);
+
+  // Так само і для заокруглення: прев'ю міняється під час руху, а весь застосунок — коли відпустили
+  const [draftCorner, setDraftCorner] = useState(cornerScale);
+  useEffect(() => {
+    setDraftCorner(cornerScale);
+  }, [cornerScale]);
 
   const surface = isDark ? colors.card : colors.cardAlt;
   const divider = { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border };
@@ -108,9 +139,9 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ visible, onClose }) => {
   };
 
   const handleReset = () => {
-    Alert.alert(
+    appAlert(
       'Скинути налаштування?',
-      'Тема, розмір тексту та формат сум повернуться до стандартних. Борги не зміняться.',
+      'Тема, розмір тексту, заокруглення та формат сум повернуться до стандартних. Борги не зміняться.',
       [
         { text: 'Скасувати', style: 'cancel' },
         { text: 'Скинути', style: 'destructive', onPress: resetToDefaults },
@@ -121,7 +152,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ visible, onClose }) => {
   const syncStatus = !isOnline
     ? 'Немає з\'єднання'
     : lastUpdate
-      ? `Оновлено ${lastUpdate.toLocaleDateString('uk-UA')} о ${lastUpdate.toLocaleTimeString('uk-UA', { hour: '2-digit', minute: '2-digit' })}`
+      ? `Оновлено ${formatDayLabel(lastUpdate).replace(/^(Сьогодні|Учора)$/, word => word.toLowerCase())} о ${formatClock(lastUpdate)}`
       : 'Ще не оновлювалось';
 
   return (
@@ -215,6 +246,37 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ visible, onClose }) => {
           </View>
         </View>
 
+        <Text style={[styles.sectionLabel, { color: colors.text }]}>Заокруглення</Text>
+        <View style={[styles.card, styles.block, { backgroundColor: surface }]}>
+          <View style={styles.blockHeader}>
+            <IconTile icon="rounded-corner" colors={colors} />
+            <Text style={[styles.rowLabel, { color: colors.text }]}>Кути елементів</Text>
+            <View style={[styles.valueChip, { backgroundColor: colors.background }]}>
+              <Text style={[styles.valueChipText, { color: colors.text }]}>{Math.round(draftCorner * 100)}%</Text>
+            </View>
+          </View>
+          <CornerPreview scale={draftCorner} colors={colors} surface={surface} />
+          <View style={styles.sliderRow}>
+            <View style={[styles.cornerIcon, { borderColor: colors.textSecondary, borderRadius: 0 }]} />
+            <View style={styles.sliderTrack}>
+              <Slider
+                style={styles.slider}
+                minimumValue={CORNER_SCALE_MIN}
+                maximumValue={CORNER_SCALE_MAX}
+                step={0.1}
+                value={cornerScale}
+                onValueChange={value => setDraftCorner(Math.round(value * 10) / 10)}
+                onSlidingComplete={value => setCornerScale(Math.round(value * 10) / 10)}
+                minimumTrackTintColor={colors.text}
+                maximumTrackTintColor={colors.border}
+                thumbTintColor={colors.text}
+                accessibilityLabel="Заокруглення кутів"
+              />
+            </View>
+            <View style={[styles.cornerIcon, { borderColor: colors.textSecondary, borderRadius: 7 }]} />
+          </View>
+        </View>
+
         <Text style={[styles.sectionLabel, { color: colors.text }]}>Суми</Text>
         <View style={[styles.card, { backgroundColor: surface }]}>
           <View style={styles.row}>
@@ -291,7 +353,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ visible, onClose }) => {
 
 export default SettingsModal;
 
-const styles = StyleSheet.create({
+const styles = appStyles({
   scrollContent: {
     paddingBottom: 8,
   },
@@ -326,7 +388,7 @@ const styles = StyleSheet.create({
     letterSpacing: 0.3,
   },
   sectionLabel: {
-    fontSize: 17,
+    fontSize: 18,
     fontFamily: 'NunitoSansBold',
     letterSpacing: 0.3,
     marginTop: 24,
@@ -517,17 +579,80 @@ const styles = StyleSheet.create({
     width: 20,
     textAlign: 'center',
   },
+  cornerPreview: {
+    padding: 12,
+    gap: 10,
+    marginTop: 4,
+    marginBottom: 4,
+  },
+  cornerPreviewTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  cornerAvatar: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+  },
+  cornerLines: {
+    flex: 1,
+    gap: 6,
+  },
+  cornerLine: {
+    width: '40%',
+    height: 6,
+    borderRadius: 3,
+  },
+  cornerLineWide: {
+    width: '65%',
+    height: 8,
+    borderRadius: 4,
+  },
+  cornerAmount: {
+    fontSize: 16,
+    fontFamily: 'NunitoSansExtraBold',
+    letterSpacing: 0.3,
+  },
+  cornerField: {
+    height: 40,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    justifyContent: 'center',
+  },
+  cornerFieldText: {
+    fontSize: 14,
+    fontFamily: 'NunitoSans',
+    letterSpacing: 0.3,
+  },
+  cornerButton: {
+    minHeight: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  cornerButtonText: {
+    fontSize: 14,
+    fontFamily: 'NunitoSansBold',
+    letterSpacing: 0.3,
+  },
+  // Значки по краях повзунка: прямий і заокруглений кут
+  cornerIcon: {
+    width: 18,
+    height: 18,
+    borderWidth: 2,
+    marginHorizontal: 1,
+  },
   resetButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
-    minHeight: 52,
-    borderRadius: 999,
+    minHeight: BUTTON.height,
+    borderRadius: BUTTON.radius,
     marginTop: 24,
   },
   resetText: {
-    fontSize: 15,
+    fontSize: 16,
     fontFamily: 'NunitoSansBold',
     letterSpacing: 0.3,
   },

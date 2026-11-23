@@ -1,15 +1,19 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
-  View, Text, TextInput, TouchableOpacity, KeyboardAvoidingView, Platform, Alert, Vibration,
-  ScrollView, StyleSheet, ActivityIndicator, Animated, BackHandler,
+  View, Text, TextInput, TouchableOpacity, KeyboardAvoidingView, Platform, Vibration,
+  ScrollView, ActivityIndicator, Animated, Image, Pressable, Easing,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { router } from 'expo-router';
 import Icon from '@/components/ui/Icon';
-import WelcomeView from '@/components/auth/WelcomeView';
+import AuthBackdrop from '@/components/auth/AuthBackdrop';
+import CoinBurst from '@/components/auth/CoinBurst';
 import { useFirebase } from '../contexts/FirebaseContext';
 import { useAppTheme } from '../contexts/ThemeContext';
+import { appStyles } from '@/utils/appStyles';
+import { appAlert } from '@/components/ui/AppDialog';
+import { BUTTON } from '@/constants/Theme';
 
 type Mode = 'login' | 'register';
 type Field = 'name' | 'email' | 'password';
@@ -22,6 +26,12 @@ const MODES: { key: Mode; label: string }[] = [
 const SWITCH_PADDING = 4;
 const MIN_PASSWORD = 8;
 const MAX_NAME = 36;
+
+// Очікувані помилки (неправильний пароль, зайнята пошта тощо) показуємо людині, але не пишемо в консоль як збій
+const KNOWN_AUTH_ERRORS = [
+  'auth/invalid-credential', 'auth/wrong-password', 'auth/user-not-found', 'auth/email-already-in-use',
+  'auth/invalid-email', 'auth/weak-password', 'auth/too-many-requests', 'auth/network-request-failed',
+];
 
 // Зрозумілі повідомлення замість технічних кодів Firebase
 const authErrorMessage = (code: string | undefined, mode: Mode) => {
@@ -49,8 +59,6 @@ const AuthScreen = () => {
   const { auth, db, setUser, getCurrentUser } = useFirebase();
   const { colors, isDark } = useAppTheme();
   const insets = useSafeAreaInsets();
-  // Спершу вітальний екран, з нього — форма входу або реєстрації
-  const [showWelcome, setShowWelcome] = useState(true);
   const [mode, setMode] = useState<Mode>('login');
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -68,6 +76,29 @@ const AuthScreen = () => {
 
   const [segmentWidth, setSegmentWidth] = useState(0);
   const thumbX = useRef(new Animated.Value(0)).current;
+
+  // Пасхалка: три швидкі тапи по іконці — іконка робить сальто, а з неї сиплються монети
+  const iconRef = useRef<View>(null);
+  const iconSpin = useRef(new Animated.Value(0)).current;
+  const taps = useRef<number[]>([]);
+  const [burst, setBurst] = useState({ count: 0, origin: { x: 0, y: 0 } });
+
+  const handleIconTap = () => {
+    const now = Date.now();
+    taps.current = [...taps.current.filter(time => now - time < 700), now];
+    if (taps.current.length < 3) return;
+    taps.current = [];
+    Vibration.vibrate(30);
+    iconSpin.setValue(0);
+    Animated.timing(iconSpin, { toValue: 1, duration: 700, easing: Easing.out(Easing.back(1.5)), useNativeDriver: true }).start();
+    iconRef.current?.measureInWindow((x, y, width, height) => {
+      setBurst(prev => ({ count: prev.count + 1, origin: { x: x + width / 2, y: y + height / 2 } }));
+    });
+  };
+  const iconTransform = [
+    { rotate: iconSpin.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] }) },
+    { scale: iconSpin.interpolate({ inputRange: [0, 0.3, 1], outputRange: [1, 1.18, 1] }) },
+  ];
   const isLogin = mode === 'login';
 
   useEffect(() => {
@@ -98,21 +129,6 @@ const AuthScreen = () => {
       bounciness: 4,
     }).start();
   }, [isLogin, segmentWidth, thumbX]);
-
-  // «Назад» на Android із форми повертає на вітальний екран
-  useEffect(() => {
-    if (showWelcome) return;
-    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
-      setShowWelcome(true);
-      return true;
-    });
-    return () => subscription.remove();
-  }, [showWelcome]);
-
-  const openForm = (next: Mode) => {
-    switchMode(next);
-    setShowWelcome(false);
-  };
 
   const switchMode = (next: Mode) => {
     setMode(next);
@@ -182,7 +198,7 @@ const AuthScreen = () => {
       }
       await signIn();
     } catch (error: any) {
-      console.error(isLogin ? 'Login error:' : 'Registration error:', error);
+      if (!KNOWN_AUTH_ERRORS.includes(error?.code)) console.error(isLogin ? 'Login error:' : 'Registration error:', error);
       fail(authErrorMessage(error?.code, mode));
     } finally {
       setIsSubmitting(false);
@@ -200,9 +216,9 @@ const AuthScreen = () => {
     try {
       await auth().sendPasswordResetEmail(address);
       setFormError(null);
-      Alert.alert('Перевірте пошту', `Ми надіслали посилання для зміни пароля на ${address}`);
+      appAlert('Перевірте пошту', `Ми надіслали посилання для зміни пароля на ${address}`);
     } catch (error: any) {
-      console.error('Password reset error:', error);
+      if (!KNOWN_AUTH_ERRORS.includes(error?.code)) console.error('Password reset error:', error);
       fail(authErrorMessage(error?.code, 'login'));
     }
   };
@@ -211,10 +227,7 @@ const AuthScreen = () => {
     return <View style={{ flex: 1, backgroundColor: colors.background }} />;
   }
 
-  if (showWelcome) {
-    return <WelcomeView onStart={() => openForm('register')} onLogin={() => openForm('login')} />;
-  }
-
+  // Суцільні поля: фактура фону не просвічує крізь текст і кнопки
   const surface = isDark ? colors.card : colors.cardAlt;
   const fieldError = (field: Field) => (submitted ? errors[field] : undefined);
   const borderFor = (field: Field) =>
@@ -249,21 +262,21 @@ const AuthScreen = () => {
   return (
     <View style={[styles.screen, { backgroundColor: colors.background }]}>
       <StatusBar style={isDark ? 'light' : 'dark'} />
+      <AuthBackdrop isDark={isDark} />
       <KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <ScrollView
           contentContainerStyle={[styles.content, { paddingTop: insets.top + 12, paddingBottom: insets.bottom + 24 }]}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          <TouchableOpacity
-            style={[styles.back, { backgroundColor: surface }]}
-            onPress={() => setShowWelcome(true)}
-            disabled={isSubmitting}
-            accessibilityRole="button"
-            accessibilityLabel="Назад"
-          >
-            <Icon name="arrow-forward" size={20} color={colors.icon} style={styles.backIcon} />
-          </TouchableOpacity>
+          <View style={styles.brand}>
+            <Pressable onPress={handleIconTap} accessible={false}>
+              <Animated.View ref={iconRef} style={{ transform: iconTransform }}>
+                <Image source={require('../assets/images/icon.png')} style={[styles.brandIcon, { borderColor: isDark ? 'rgba(255,255,255,0.14)' : 'transparent' }]} />
+              </Animated.View>
+            </Pressable>
+            <Text style={[styles.brandName, { color: colors.text }]}>eBorg</Text>
+          </View>
 
           <Text style={[styles.title, { color: colors.text }]}>
             {isLogin ? 'З поверненням' : 'Створіть акаунт'}
@@ -391,11 +404,12 @@ const AuthScreen = () => {
           </TouchableOpacity>
         </ScrollView>
       </KeyboardAvoidingView>
+      <CoinBurst trigger={burst.count} origin={burst.origin} />
     </View>
   );
 };
 
-const styles = StyleSheet.create({
+const styles = appStyles({
   screen: {
     flex: 1,
   },
@@ -403,26 +417,33 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     paddingHorizontal: 24,
   },
-  // Знак «E» окремо, під ним назва
-  back: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    justifyContent: 'center',
+  brand: {
     alignItems: 'center',
-    marginBottom: 32,
+    gap: 12,
+    marginTop: 16,
+    marginBottom: 40,
   },
-  backIcon: {
-    transform: [{ rotate: '180deg' }],
+  brandIcon: {
+    width: 88,
+    height: 88,
+    borderRadius: 26,
+    borderWidth: 1,
+  },
+  brandName: {
+    fontSize: 28,
+    fontFamily: 'NunitoSansExtraBold',
+    letterSpacing: 0.3,
   },
   title: {
-    fontSize: 32,
-    lineHeight: 38,
+    fontSize: 28,
+    lineHeight: 34,
+    textAlign: 'center',
     fontFamily: 'NunitoSansExtraBold',
     letterSpacing: 0.3,
   },
   subtitle: {
-    fontSize: 15,
+    fontSize: 16,
+    textAlign: 'center',
     fontFamily: 'NunitoSans',
     letterSpacing: 0.3,
     marginTop: 8,
@@ -449,12 +470,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   modeText: {
-    fontSize: 15,
+    fontSize: 16,
     fontFamily: 'NunitoSans',
     letterSpacing: 0.3,
   },
   modeTextSelected: {
-    fontSize: 15,
+    fontSize: 16,
     fontFamily: 'NunitoSansBold',
     letterSpacing: 0.3,
   },
@@ -524,8 +545,8 @@ const styles = StyleSheet.create({
   submit: {
     flexDirection: 'row',
     gap: 8,
-    minHeight: 56,
-    borderRadius: 999,
+    minHeight: BUTTON.height,
+    borderRadius: BUTTON.radius,
     justifyContent: 'center',
     alignItems: 'center',
     marginTop: 24,

@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, TouchableOpacity, Animated, Easing, Vibration, 
 import { CameraView } from 'expo-camera';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Icon from '@/components/ui/Icon';
+import { appStyles } from '@/utils/appStyles';
 
 export const isReceiptUrl = (data: string) => data.includes('cabinet.tax.gov.ua/cashregs/check');
 
@@ -16,6 +17,9 @@ type ScanState = 'idle' | 'wrong' | 'found';
 const DIM = 'rgba(0, 0, 0, 0.6)';
 const CORNER = 28;
 const CORNER_WIDTH = 4;
+const CORNER_RADIUS = 20;
+// Затемнення — одна рамка такої товщини, що перекриває весь екран; її внутрішній край і є вікно сканування
+const DIM_SPREAD = 2000;
 const STATE_COLORS: Record<ScanState, string> = {
   idle: '#FFFFFF',
   wrong: '#FF6B6B',
@@ -101,16 +105,23 @@ const ReceiptCamera: React.FC<ReceiptCameraProps> = ({ onClose, onReceipt }) => 
         onBarcodeScanned={handleScanned}
       />
 
-      {/* Затемнення з прорізаним вікном: рамка лишається світлою, все навколо — приглушене */}
+      {/* Затемнення з прорізаним вікном: рамка лишається світлою, все навколо — приглушене.
+          Проріз заокруглений так само, як кутики рамки */}
       <View style={StyleSheet.absoluteFill} pointerEvents="none">
-        <View style={[styles.dim, styles.flex]} />
+        <View style={styles.flex} />
         <View style={{ flexDirection: 'row', height: boxSize }}>
-          <View style={[styles.dim, styles.flex]} />
+          <View style={styles.flex} />
           <View style={{ width: boxSize, height: boxSize }}>
-            {corner({ top: 0, left: 0, borderTopWidth: CORNER_WIDTH, borderLeftWidth: CORNER_WIDTH, borderTopLeftRadius: 20 })}
-            {corner({ top: 0, right: 0, borderTopWidth: CORNER_WIDTH, borderRightWidth: CORNER_WIDTH, borderTopRightRadius: 20 })}
-            {corner({ bottom: 0, left: 0, borderBottomWidth: CORNER_WIDTH, borderLeftWidth: CORNER_WIDTH, borderBottomLeftRadius: 20 })}
-            {corner({ bottom: 0, right: 0, borderBottomWidth: CORNER_WIDTH, borderRightWidth: CORNER_WIDTH, borderBottomRightRadius: 20 })}
+            <View
+              style={[
+                frameStyles.dimFrame,
+                { width: boxSize + DIM_SPREAD * 2, height: boxSize + DIM_SPREAD * 2 },
+              ]}
+            />
+            {corner({ top: 0, left: 0, borderTopWidth: CORNER_WIDTH, borderLeftWidth: CORNER_WIDTH, borderTopLeftRadius: CORNER_RADIUS })}
+            {corner({ top: 0, right: 0, borderTopWidth: CORNER_WIDTH, borderRightWidth: CORNER_WIDTH, borderTopRightRadius: CORNER_RADIUS })}
+            {corner({ bottom: 0, left: 0, borderBottomWidth: CORNER_WIDTH, borderLeftWidth: CORNER_WIDTH, borderBottomLeftRadius: CORNER_RADIUS })}
+            {corner({ bottom: 0, right: 0, borderBottomWidth: CORNER_WIDTH, borderRightWidth: CORNER_WIDTH, borderBottomRightRadius: CORNER_RADIUS })}
             {scanState === 'found' ? (
               <View style={styles.foundBadge}>
                 <Icon name="success" size={56} color={accent} />
@@ -119,9 +130,9 @@ const ReceiptCamera: React.FC<ReceiptCameraProps> = ({ onClose, onReceipt }) => 
               <Animated.View style={[styles.scanLine, { backgroundColor: accent, transform: [{ translateY: lineY }] }]} />
             )}
           </View>
-          <View style={[styles.dim, styles.flex]} />
+          <View style={styles.flex} />
         </View>
-        <View style={[styles.dim, styles.flex, styles.bottomArea]}>
+        <View style={[styles.flex, styles.bottomArea]}>
           <Text style={styles.title}>
             {scanState === 'found' ? 'Чек знайдено' : 'Наведіть на QR-код чека'}
           </Text>
@@ -162,16 +173,13 @@ const ReceiptCamera: React.FC<ReceiptCameraProps> = ({ onClose, onReceipt }) => 
   );
 };
 
-const styles = StyleSheet.create({
+const styles = appStyles({
   container: {
     flex: 1,
     backgroundColor: '#000',
   },
   flex: {
     flex: 1,
-  },
-  dim: {
-    backgroundColor: DIM,
   },
   corner: {
     position: 'absolute',
@@ -240,7 +248,7 @@ const styles = StyleSheet.create({
   },
   topTitle: {
     color: '#fff',
-    fontSize: 17,
+    fontSize: 18,
     fontFamily: 'NunitoSansBold',
     letterSpacing: 0.3,
   },
@@ -254,6 +262,20 @@ const styles = StyleSheet.create({
   },
   roundButtonActive: {
     backgroundColor: '#fff',
+  },
+});
+
+// Окремо від appStyles: це геометрія прорізу під кутики рамки, а не «кути елементів»,
+// і налаштування «Заокруглення» не повинне її змінювати
+const frameStyles = StyleSheet.create({
+  // Внутрішній радіус рамки = зовнішній мінус товщина, тобто рівно CORNER_RADIUS
+  dimFrame: {
+    position: 'absolute',
+    top: -DIM_SPREAD,
+    left: -DIM_SPREAD,
+    borderWidth: DIM_SPREAD,
+    borderColor: DIM,
+    borderRadius: DIM_SPREAD + CORNER_RADIUS,
   },
 });
 

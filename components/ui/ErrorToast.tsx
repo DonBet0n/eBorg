@@ -1,6 +1,8 @@
 import React, { useEffect, useRef } from 'react';
-import { Animated, StyleProp, StyleSheet, Text, ViewStyle } from 'react-native';
+import { Animated, StyleProp, StyleSheet, Text, View, ViewStyle } from 'react-native';
+import Icon from '@/components/ui/Icon';
 import { useAppTheme } from '../../contexts/ThemeContext';
+import { appStyles } from '@/utils/appStyles';
 
 interface ErrorToastProps {
     error: string | null;
@@ -9,7 +11,7 @@ interface ErrorToastProps {
 }
 
 const ErrorToast: React.FC<ErrorToastProps> = ({ error, onHide, style }) => {
-    const { colors } = useAppTheme();
+    const { colors, isDark } = useAppTheme();
     const fadeAnim = useRef(new Animated.Value(0)).current;
     // onHide зазвичай створюється заново при кожному рендері; тримаємо його в ref,
     // щоб повідомлення не зникало раніше часу, коли екран перемальовується
@@ -43,30 +45,53 @@ const ErrorToast: React.FC<ErrorToastProps> = ({ error, onHide, style }) => {
 
     return (
         <Animated.View
-            style={[styles.errorContainer, { backgroundColor: colors.card, borderColor: colors.negativeText, opacity: fadeAnim }, style]}
+            style={[
+                styles.errorContainer,
+                { backgroundColor: isDark ? colors.cardAlt : colors.background, borderColor: colors.negativeText, opacity: fadeAnim },
+                style,
+            ]}
             accessibilityRole="alert"
             accessibilityLiveRegion="polite"
         >
-            <Text style={[styles.errorText, { color: colors.negativeText }]}>{error}</Text>
+            <View style={[styles.iconCircle, { backgroundColor: colors.negativeBg }]}>
+                <Icon name="alert" size={16} color={colors.negativeText} />
+            </View>
+            <Text style={[styles.errorText, { color: colors.text }]}>{error}</Text>
         </Animated.View>
     );
 };
 
-const styles = StyleSheet.create({
+const styles = appStyles({
     errorContainer: {
         position: 'absolute',
         bottom: 20,
         left: 16,
         right: 16,
-        padding: 12,
-        borderRadius: 12,
-        borderWidth: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10,
+        paddingVertical: 10,
+        paddingHorizontal: 12,
+        borderRadius: 18,
+        borderWidth: StyleSheet.hairlineWidth,
+        elevation: 6,
+        shadowColor: '#000',
+        shadowOpacity: 0.2,
+        shadowRadius: 8,
+        shadowOffset: { width: 0, height: 2 },
+    },
+    iconCircle: {
+        width: 28,
+        height: 28,
+        borderRadius: 14,
+        justifyContent: 'center',
+        alignItems: 'center',
     },
     errorText: {
+        flex: 1,
         fontSize: 14,
-        fontFamily: 'NunitoSans',
+        fontFamily: 'NunitoSansBold',
         letterSpacing: 0.3,
-        textAlign: 'center',
     },
 });
 

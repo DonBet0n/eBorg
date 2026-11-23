@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, TextInput, Alert, ActivityIndicator, ScrollView } from 'react-native';
+import { View, Text, TouchableOpacity, TextInput, ActivityIndicator, ScrollView } from 'react-native';
 import Icon from '@/components/ui/Icon';
 import Avatar from '@/components/ui/Avatar';
 import { useFirebase } from '../../contexts/FirebaseContext';
@@ -9,6 +9,9 @@ import { router } from 'expo-router';
 
 import { useAppTheme } from '../../contexts/ThemeContext';
 import BottomSheet from '../ui/BottomSheet';
+import { appStyles } from '@/utils/appStyles';
+import { appAlert } from '@/components/ui/AppDialog';
+import { BUTTON } from '@/constants/Theme';
 
 const AVATAR_SIZE = 256;
 
@@ -68,7 +71,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ visible, onClose }) => {
             }
         } catch (error) {
             console.error('Error updating avatar:', error);
-            Alert.alert('Помилка', 'Не вдалося оновити фото. Спробуйте ще раз.');
+            appAlert('Помилка', 'Не вдалося оновити фото. Спробуйте ще раз.');
         } finally {
             setIsAvatarUpdating(false);
         }
@@ -80,7 +83,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ visible, onClose }) => {
             await updateUser({ avatar: db.FieldValue.delete() });
         } catch (error) {
             console.error('Error removing avatar:', error);
-            Alert.alert('Помилка', 'Не вдалося видалити фото. Спробуйте ще раз.');
+            appAlert('Помилка', 'Не вдалося видалити фото. Спробуйте ще раз.');
         } finally {
             setIsAvatarUpdating(false);
         }
@@ -92,7 +95,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ visible, onClose }) => {
             pickImage();
             return;
         }
-        Alert.alert('Фото профілю', undefined, [
+        appAlert('Фото профілю', undefined, [
             { text: 'Вибрати нове фото', onPress: pickImage },
             { text: 'Видалити фото', style: 'destructive', onPress: removeAvatar },
             { text: 'Скасувати', style: 'cancel' },
@@ -110,7 +113,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ visible, onClose }) => {
             await updateUser({ name: name.trim(), secondName: secondName.trim() });
         } catch (error) {
             console.error('Error updating profile:', error);
-            Alert.alert('Помилка', 'Не вдалося оновити профіль. Спробуйте ще раз.');
+            appAlert('Помилка', 'Не вдалося оновити профіль. Спробуйте ще раз.');
         } finally {
             setIsSaving(false);
         }
@@ -124,12 +127,12 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ visible, onClose }) => {
             router.replace('/');
         } catch (error) {
             console.error('Error logging out:', error);
-            Alert.alert('Помилка', 'Не вдалося вийти з системи. Спробуйте ще раз.');
+            appAlert('Помилка', 'Не вдалося вийти з системи. Спробуйте ще раз.');
         }
     };
 
     const handleLogout = () => {
-        Alert.alert('Вийти з акаунту?', 'Щоб знову побачити свої борги, потрібно буде увійти ще раз.', [
+        appAlert('Вийти з акаунту?', 'Щоб знову побачити свої борги, потрібно буде увійти ще раз.', [
             { text: 'Скасувати', style: 'cancel' },
             { text: 'Вийти', style: 'destructive', onPress: logout },
         ]);
@@ -174,7 +177,6 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ visible, onClose }) => {
                 <Text style={[styles.label, { color: colors.textSecondary }]}>Пошта</Text>
                 <View style={[styles.field, styles.readonlyField, { backgroundColor: surface }]}>
                     <Text style={[styles.fieldText, { color: colors.text }]} numberOfLines={1}>{user?.email || '—'}</Text>
-                    <Icon name="check" size={18} color={colors.positiveText} />
                 </View>
 
                 <Text style={[styles.label, { color: colors.textSecondary }]}>Ім'я</Text>
@@ -232,7 +234,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ visible, onClose }) => {
     );
 };
 
-const styles = StyleSheet.create({
+const styles = appStyles({
     scroll: {
         flexShrink: 1,
     },
@@ -315,8 +317,8 @@ const styles = StyleSheet.create({
         marginLeft: 4,
     },
     saveButton: {
-        minHeight: 54,
-        borderRadius: 999,
+        minHeight: BUTTON.height,
+        borderRadius: BUTTON.radius,
         justifyContent: 'center',
         alignItems: 'center',
         marginTop: 28,
@@ -338,7 +340,7 @@ const styles = StyleSheet.create({
         marginTop: 8,
     },
     logoutText: {
-        fontSize: 15,
+        fontSize: 16,
         fontFamily: 'NunitoSansBold',
         letterSpacing: 0.3,
     },

@@ -23,7 +23,8 @@ export default function TabLayout() {
         <MaterialTopTabs
           tabBarPosition="bottom"
           tabBar={(props: React.ComponentProps<typeof TabBar>) => <TabBar {...props} />}
-          screenOptions={{ swipeEnabled: !swipeLocked }}>
+          // Фон сцени — з теми: поки екран вкладки ще рендериться, видно його, а не білий фон навігації
+          screenOptions={{ swipeEnabled: !swipeLocked, sceneStyle: { backgroundColor: colors.background } }}>
           <MaterialTopTabs.Screen name="HomeScreen" options={{ title: 'Головна' }} />
           <MaterialTopTabs.Screen name="AddScreen" options={{ title: 'Додати' }} />
           <MaterialTopTabs.Screen name="DetailsScreen" options={{ title: 'Деталі' }} />

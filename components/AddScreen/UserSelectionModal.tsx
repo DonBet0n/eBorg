@@ -6,6 +6,8 @@ import { User } from '../../types/debt';
 import { useAppTheme } from '../../contexts/ThemeContext';
 import BottomSheet from '../ui/BottomSheet';
 import { displayName } from './FormParts';
+import { appStyles } from '@/utils/appStyles';
+import { BUTTON } from '@/constants/Theme';
 
 interface UserSelectionModalProps {
     visible: boolean;
@@ -78,7 +80,7 @@ const UserSelectionModal: React.FC<UserSelectionModalProps> = ({
                                         {displayName(item)}
                                     </Text>
                                     {!!tags && (
-                                        <Text style={[styles.tags, { color: colors.textSecondary, fontSize: 13 * textScale }]} numberOfLines={1}>
+                                        <Text style={[styles.tags, { color: colors.textSecondary, fontSize: 14 * textScale }]} numberOfLines={1}>
                                             {tags}
                                         </Text>
                                     )}
@@ -101,7 +103,7 @@ const UserSelectionModal: React.FC<UserSelectionModalProps> = ({
     );
 };
 
-const styles = StyleSheet.create({
+const styles = appStyles({
     empty: {
         fontFamily: 'NunitoSans',
         letterSpacing: 0.3,
@@ -128,10 +130,10 @@ const styles = StyleSheet.create({
         marginTop: 2,
     },
     doneButton: {
-        minHeight: 52,
+        minHeight: BUTTON.height,
         justifyContent: 'center',
         alignItems: 'center',
-        borderRadius: 26,
+        borderRadius: BUTTON.radius,
         marginTop: 16,
     },
     doneButtonText: {

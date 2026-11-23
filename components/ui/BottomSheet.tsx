@@ -1,9 +1,10 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { View, Text, Pressable, TouchableOpacity, StyleSheet, KeyboardAvoidingView, Animated, PanResponder, Platform, BackHandler } from 'react-native';
+import { View, Text, Pressable, TouchableOpacity, StyleSheet, KeyboardAvoidingView, Animated, PanResponder, Platform, BackHandler, Dimensions, Easing } from 'react-native';
 import Icon from '@/components/ui/Icon';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppTheme } from '../../contexts/ThemeContext';
 import { useSheetHost } from './SheetHost';
+import { appStyles } from '@/utils/appStyles';
 
 interface BottomSheetProps {
   visible: boolean;
@@ -15,7 +16,8 @@ interface BottomSheetProps {
 // Наскільки потягнути вниз (або як швидко змахнути), щоб шторка закрилась
 const CLOSE_DISTANCE = 120;
 const CLOSE_VELOCITY = 1;
-const FADE_MS = 180;
+const OPEN_MS = 320;
+const CLOSE_MS = 220;
 
 let nextSheetId = 0;
 
@@ -28,23 +30,64 @@ const BottomSheet: React.FC<BottomSheetProps> = ({ visible, onClose, title, chil
   const key = useRef(`sheet-${nextSheetId++}`).current;
   // Лишається змонтованою, поки дограває анімація закриття
   const [mounted, setMounted] = useState(visible);
-  const opacity = useRef(new Animated.Value(0)).current;
-  const translateY = useRef(new Animated.Value(0)).current;
+  // Затемнення проявляється, а сама шторка виїжджає знизу
+  const backdropOpacity = useRef(new Animated.Value(0)).current;
+  const translateY = useRef(new Animated.Value(Dimensions.get('window').height)).current;
   const sheetHeight = useRef(0);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
 
+  // Куди ховається шторка: на свою висоту вниз, а до першого вимірювання — на висоту екрана
+  const hiddenOffset = () => sheetHeight.current || Dimensions.get('window').height;
+
+  // Шторка вже намальована і виміряна (скидається, коли її прибрано з екрана)
+  const laidOut = useRef(false);
+  // Відкриття чекає на перше вимірювання: важкий вміст (історія боргів) рендериться довго,
+  // і якби анімація стартувала одразу, на момент появи шторки вона була б уже майже закінчена
+  const pendingOpen = useRef(false);
+
+  const startOpen = () => {
+    pendingOpen.current = false;
+    Animated.parallel([
+      Animated.timing(backdropOpacity, { toValue: 1, duration: OPEN_MS, useNativeDriver: true }),
+      Animated.timing(translateY, {
+        toValue: 0,
+        duration: OPEN_MS,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+    ]).start();
+  };
+
   useEffect(() => {
     if (visible) {
       setMounted(true);
-      translateY.setValue(0);
-      Animated.timing(opacity, { toValue: 1, duration: FADE_MS, useNativeDriver: true }).start();
+      if (laidOut.current) startOpen();
+      else {
+        translateY.setValue(Dimensions.get('window').height);
+        backdropOpacity.setValue(0);
+        pendingOpen.current = true;
+      }
     } else {
-      Animated.timing(opacity, { toValue: 0, duration: FADE_MS, useNativeDriver: true }).start(({ finished }) => {
-        if (finished) setMounted(false);
+      pendingOpen.current = false;
+      Animated.parallel([
+        Animated.timing(backdropOpacity, { toValue: 0, duration: CLOSE_MS, useNativeDriver: true }),
+        Animated.timing(translateY, {
+          toValue: hiddenOffset(),
+          duration: CLOSE_MS,
+          easing: Easing.in(Easing.cubic),
+          useNativeDriver: true,
+        }),
+      ]).start(({ finished }) => {
+        if (finished) {
+          laidOut.current = false;
+          setMounted(false);
+        }
       });
     }
-  }, [visible, opacity, translateY]);
+    // startOpen читає лише refs і Animated-значення, тож у залежностях не потрібен
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, backdropOpacity, translateY]);
 
   // Кнопка «Назад» на Android закриває шторку, а не екран під нею
   useEffect(() => {
@@ -62,11 +105,8 @@ const BottomSheet: React.FC<BottomSheetProps> = ({ visible, onClose, title, chil
     onPanResponderMove: (_, g) => translateY.setValue(Math.max(0, g.dy)),
     onPanResponderRelease: (_, g) => {
       if (g.dy > CLOSE_DISTANCE || g.vy > CLOSE_VELOCITY) {
-        Animated.timing(translateY, {
-          toValue: sheetHeight.current || 600,
-          duration: 180,
-          useNativeDriver: true,
-        }).start(() => onCloseRef.current());
+        // Шторку вже тягнуть вниз — закриваємо одразу, а дорухує її ефект закриття
+        onCloseRef.current();
       } else {
         Animated.spring(translateY, { toValue: 0, bounciness: 4, useNativeDriver: true }).start();
       }
@@ -77,14 +117,23 @@ const BottomSheet: React.FC<BottomSheetProps> = ({ visible, onClose, title, chil
   })).current;
 
   const content = (
-    <Animated.View style={[StyleSheet.absoluteFill, { opacity }]} pointerEvents={visible ? 'auto' : 'none'}>
+    <View style={StyleSheet.absoluteFill} pointerEvents={visible ? 'auto' : 'none'}>
+      <Animated.View style={[StyleSheet.absoluteFill, styles.backdrop, { opacity: backdropOpacity }]} />
       {/* На iOS шторку над клавіатурою піднімає KeyboardAvoidingView. На Android вікно саме зсувається до поля
           у фокусі (adjustPan); власний зсув чи перебудова розмітки тут подвоювали підйом або збивали фокус */}
       <KeyboardAvoidingView style={styles.overlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessibilityLabel="Закрити" />
         <Animated.View
           style={[styles.sheet, { backgroundColor: colors.background, paddingBottom: insets.bottom + 16, transform: [{ translateY }] }]}
-          onLayout={e => { sheetHeight.current = e.nativeEvent.layout.height; }}
+          onLayout={e => {
+            sheetHeight.current = e.nativeEvent.layout.height;
+            laidOut.current = true;
+            if (pendingOpen.current) {
+              // Стартуємо з-під нижнього краю саме цієї шторки, щоб рух займав увесь час анімації
+              translateY.setValue(sheetHeight.current);
+              startOpen();
+            }
+          }}
         >
           <View {...panResponder.panHandlers} style={styles.dragArea}>
             <View style={[styles.grabber, { backgroundColor: colors.border }]} />
@@ -105,7 +154,7 @@ const BottomSheet: React.FC<BottomSheetProps> = ({ visible, onClose, title, chil
           <View pointerEvents="none" style={[styles.below, { backgroundColor: colors.background }]} />
         </Animated.View>
       </KeyboardAvoidingView>
-    </Animated.View>
+    </View>
   );
 
   // Вміст оновлюється в SheetHost після кожного рендеру, щоб шторка бачила свіжі дані.
@@ -120,10 +169,12 @@ const BottomSheet: React.FC<BottomSheetProps> = ({ visible, onClose, title, chil
   return null;
 };
 
-const styles = StyleSheet.create({
+const styles = appStyles({
+  backdrop: {
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+  },
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
     justifyContent: 'flex-end',
   },
   sheet: {

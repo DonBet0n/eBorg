@@ -1,4 +1,4 @@
-import { splitAmount } from '../debtCalculations';
+import { formatAmount, isValidDebtAmount, splitAmount } from '../debtCalculations';
 
 const sum = (values: number[]) => Math.round(values.reduce((acc, value) => acc + value * 100, 0));
 
@@ -21,5 +21,42 @@ describe('splitAmount', () => {
 
   it('не ламається, якщо учасників немає', () => {
     expect(splitAmount(100, 0)).toEqual([]);
+  });
+});
+
+describe('formatAmount', () => {
+  const NBSP = ' ';
+
+  it('розділяє тисячі нерозривним пробілом', () => {
+    expect(formatAmount(12450)).toBe(`12${NBSP}450.00`);
+    expect(formatAmount(1234567.5)).toBe(`1${NBSP}234${NBSP}567.50`);
+  });
+
+  it('малі й від\'ємні суми', () => {
+    expect(formatAmount(5)).toBe('5.00');
+    expect(formatAmount(-1250.5)).toBe(`-1${NBSP}250.50`);
+  });
+
+  it('порожнє значення — нуль', () => {
+    expect(formatAmount(undefined)).toBe('0.00');
+    expect(formatAmount(NaN)).toBe('0.00');
+  });
+});
+
+describe('isValidDebtAmount', () => {
+  it('приймає суму від копійки', () => {
+    expect(isValidDebtAmount(0.01)).toBe(true);
+    expect(isValidDebtAmount(250)).toBe(true);
+  });
+
+  it('відкидає нуль, мінус і те, що округлюється до нуля', () => {
+    expect(isValidDebtAmount(0)).toBe(false);
+    expect(isValidDebtAmount(-5)).toBe(false);
+    expect(isValidDebtAmount(0.004)).toBe(false);
+  });
+
+  it('відкидає не-числа', () => {
+    expect(isValidDebtAmount(NaN)).toBe(false);
+    expect(isValidDebtAmount(Infinity)).toBe(false);
   });
 });

@@ -44,11 +44,13 @@ const ICONS = {
   'bell': 0xe059, // bell
   'search': 0xe151, // search
   'swap': 0xe37d, // arrow-up-down
+  'swap-horizontal': 0xe417, // arrow-right-left
   'edit': 0xe1f9, // pencil
   'success': 0xe226, // circle-check
   'theme': 0xe2b2, // sun-moon
   'palette': 0xe1dd, // palette
   'text-size': 0xe587, // a-large-small
+  'rounded-corner': 0xe648, // square-round-corner
   'coins': 0xe097, // coins
   'currency': 0xe052, // banknote
   'flashlight': 0xe0d3, // flashlight

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { View, TouchableOpacity, Text, StyleSheet, Animated } from 'react-native';
+import { View, TouchableOpacity, Text, Animated } from 'react-native';
 import SoloTab from '../../components/AddScreen/Solo';
 import MultyTab from '../../components/AddScreen/Multy';
 import { useFormColors } from '../../components/AddScreen/FormParts';
@@ -8,6 +8,7 @@ import { useAppTheme } from '../../contexts/ThemeContext';
 import { useSetTabSwipeLocked } from '../../contexts/TabSwipeContext';
 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { appStyles } from '@/utils/appStyles';
 
 type Mode = 'solo' | 'multy';
 
@@ -56,10 +57,7 @@ const AddScreen: React.FC = () => {
     // повзунок спільний, тож у щойно показаній формі він плавно доїжджає до вибраного
     const header = (
         <View style={styles.header}>
-            <Text style={[styles.title, { color: colors.text, fontSize: 28 * textScale }]} accessibilityRole="header">
-                Новий борг
-            </Text>
-
+            <Text accessibilityRole="header" style={[styles.title, { color: colors.text, fontSize: 28 * textScale }]}>Новий борг</Text>
             <View
                 style={[styles.modeSwitch, { backgroundColor: surface }]}
                 accessibilityRole="tablist"
@@ -92,7 +90,7 @@ const AddScreen: React.FC = () => {
                             <Text
                                 style={[
                                     selected ? styles.modeTextSelected : styles.modeText,
-                                    { color: selected ? colors.background : colors.textSecondary, fontSize: 15 * textScale },
+                                    { color: selected ? colors.background : colors.textSecondary, fontSize: 16 * textScale },
                                 ]}
                                 numberOfLines={1}
                             >
@@ -118,20 +116,20 @@ const AddScreen: React.FC = () => {
     );
 };
 
-const styles = StyleSheet.create({
+const styles = appStyles({
     container: {
         flex: 1,
     },
     // Бічний відступ дає сама форма (16)
     header: {
-        paddingTop: 12,
-        marginBottom: 24,
+        paddingTop: 8,
+        marginBottom: 12,
     },
+    // Як «Деталі» на сусідній вкладці
     title: {
         fontFamily: 'NunitoSansExtraBold',
         letterSpacing: 0.3,
-        marginHorizontal: 4,
-        marginBottom: 20,
+        marginBottom: 12,
     },
     modeSwitch: {
         flexDirection: 'row',
@@ -148,7 +146,7 @@ const styles = StyleSheet.create({
     },
     modeButton: {
         flex: 1,
-        minHeight: 44,
+        minHeight: 40,
         justifyContent: 'center',
         alignItems: 'center',
     },

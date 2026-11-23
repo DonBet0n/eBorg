@@ -1,16 +1,18 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { Alert, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { ScrollView, TouchableOpacity, View } from 'react-native';
 import Icon from '@/components/ui/Icon';
 import DebtItemComponent from '../DebtItem';
 import { User, DebtItem } from '../../types/debt';
 import { useFirebase } from '../../contexts/FirebaseContext';
 import { useAppTheme } from '../../contexts/ThemeContext';
-import { formatAmount } from '../../utils/debtCalculations';
+import { formatAmount, isValidDebtAmount } from '../../utils/debtCalculations';
 import ConfirmDebtModal from './ConfirmDebtModal';
 import UserSelectionModal from './UserSelectionModal';
 import ErrorToast from '../ui/ErrorToast';
 import QRScannerModal from '../QRScannerModal';
-import { AddItemButton, ClearFormButton, FormFooter, ItemsHeader, PersonRow, displayName, formStyles, useFormColors } from './FormParts';
+import { AddItemButton, ClearFormButton, FormFooter, ItemsHeader, PeopleBar, PersonChip, displayName, formStyles, useFormColors } from './FormParts';
+import { appStyles } from '@/utils/appStyles';
+import { appAlert } from '@/components/ui/AppDialog';
 
 interface SoloTabProps {
     userList: User[];
@@ -24,7 +26,7 @@ const EMPTY_ITEM: DebtItem = { id: '1', text: '', num: '0' };
 const SoloTab: React.FC<SoloTabProps> = ({ userList, onHasItemsChange, header }) => {
     const { user: currentUser, createDebts, notifyUser } = useFirebase();
     const { colors, currencySymbol } = useAppTheme();
-    const { surface, field: fieldBg } = useFormColors();
+    const { surface } = useFormColors();
     const [isUserListModalVisible, setUserListModalVisible] = useState(false);
     const [debtItemsSolo, setDebtItemsSolo] = useState<DebtItem[]>([EMPTY_ITEM]);
     const [selectedUserSolo1, setSelectedUserSolo1] = useState<User | null>(null);
@@ -44,7 +46,17 @@ const SoloTab: React.FC<SoloTabProps> = ({ userList, onHasItemsChange, header })
     // Порожній початковий рядок за позицію не рахується
     const hasItems = debtItemsSolo.length > 1 ||
                      (!!firstItem && (firstItem.text.trim() !== '' || (firstItem.num !== '0' && firstItem.num !== '')));
-    const hasData = selectedUserSolo1 !== null || selectedUserSolo2 !== null || hasItems;
+    // «Я» у «Хто винен» стоїть за замовчуванням і даними форми не рахується
+    const isDefaultPeople = selectedUserSolo2 === null && (selectedUserSolo1 === null || selectedUserSolo1.id === currentUser?.id);
+    const hasData = !isDefaultPeople || hasItems;
+
+    // Один з двох майже завжди ви, тож одразу ставимо вас першим, у «Хто винен»; ⇄ міняє напрямок
+    const placedMeRef = useRef(false);
+    useEffect(() => {
+        if (!currentUser || placedMeRef.current) return;
+        placedMeRef.current = true;
+        setSelectedUserSolo1(prev => prev ?? currentUser);
+    }, [currentUser]);
 
     useEffect(() => {
         onHasItemsChange?.(hasItems);
@@ -117,12 +129,12 @@ const SoloTab: React.FC<SoloTabProps> = ({ userList, onHasItemsChange, header })
 
     const resetForm = useCallback(() => {
         setDebtItemsSolo([EMPTY_ITEM]);
-        setSelectedUserSolo1(null);
+        setSelectedUserSolo1(currentUser);
         setSelectedUserSolo2(null);
-    }, []);
+    }, [currentUser]);
 
     const confirmClear = () => {
-        Alert.alert(
+        appAlert(
             'Очистити форму?',
             'Обраних людей і всі позиції буде прибрано.',
             [
@@ -145,8 +157,8 @@ const SoloTab: React.FC<SoloTabProps> = ({ userList, onHasItemsChange, header })
             return false;
         }
 
-        // Сума має бути числом більше нуля: порожнє поле чи сама крапка не проходять
-        const hasEmptyAmount = debtItemsSolo.some(item => !(Number(item.num) > 0));
+        // Сума — щонайменше копійка: порожнє поле, сама крапка чи 0.001 не проходять
+        const hasEmptyAmount = debtItemsSolo.some(item => !isValidDebtAmount(Number(item.num)));
 
         if (hasEmptyAmount) {
             setError('Вкажіть суму в кожній позиції або видаліть порожні');
@@ -218,33 +230,33 @@ const SoloTab: React.FC<SoloTabProps> = ({ userList, onHasItemsChange, header })
                 showsVerticalScrollIndicator={false}
             >
                 {header}
-                {/* Хто → кому */}
-                <View style={[formStyles.card, styles.peopleCard, { backgroundColor: surface }]}>
-                    <View style={styles.people}>
-                        <PersonRow
-                            label="Хто винен"
-                            placeholder="Обрати людину"
-                            users={selectedUserSolo1 ? [selectedUserSolo1] : []}
-                            onPress={() => openUserListModalSolo('user1')}
-                        />
-                        <PersonRow
-                            label="Кому винен"
-                            placeholder="Обрати людину"
-                            users={selectedUserSolo2 ? [selectedUserSolo2] : []}
-                            onPress={() => openUserListModalSolo('user2')}
-                            divider
-                        />
-                    </View>
-                    <TouchableOpacity
-                        style={[styles.swapButton, { backgroundColor: fieldBg }, !selectedUserSolo1 && !selectedUserSolo2 && styles.swapButtonDisabled]}
-                        onPress={swapUsers}
-                        disabled={!selectedUserSolo1 && !selectedUserSolo2}
-                        accessibilityRole="button"
-                        accessibilityLabel="Поміняти місцями, хто винен і кому"
-                    >
-                        <Icon name="swap" size={20} color={colors.text} />
-                    </TouchableOpacity>
-                </View>
+                {/* Хто → кому: дві плашки в один рядок, між ними — «поміняти місцями» */}
+                <PeopleBar
+                    middle={
+                        <TouchableOpacity
+                            style={[styles.swapButton, { backgroundColor: surface }, !selectedUserSolo1 && !selectedUserSolo2 && styles.swapButtonDisabled]}
+                            onPress={swapUsers}
+                            disabled={!selectedUserSolo1 && !selectedUserSolo2}
+                            accessibilityRole="button"
+                            accessibilityLabel="Поміняти місцями, хто винен і кому"
+                        >
+                            <Icon name="swap-horizontal" size={18} color={colors.text} />
+                        </TouchableOpacity>
+                    }
+                >
+                    <PersonChip
+                        label="Хто винен"
+                        placeholder="Обрати"
+                        users={selectedUserSolo1 ? [selectedUserSolo1] : []}
+                        onPress={() => openUserListModalSolo('user1')}
+                    />
+                    <PersonChip
+                        label="Кому"
+                        placeholder="Обрати"
+                        users={selectedUserSolo2 ? [selectedUserSolo2] : []}
+                        onPress={() => openUserListModalSolo('user2')}
+                    />
+                </PeopleBar>
 
                 {/* Що саме */}
                 <ItemsHeader
@@ -337,21 +349,13 @@ const SoloTab: React.FC<SoloTabProps> = ({ userList, onHasItemsChange, header })
     );
 };
 
-const styles = StyleSheet.create({
-    peopleCard: {
-        flexDirection: 'row',
-        alignItems: 'center',
-    },
-    people: {
-        flex: 1,
-    },
+const styles = appStyles({
     swapButton: {
-        width: 44,
-        height: 44,
-        borderRadius: 22,
+        width: 36,
+        height: 36,
+        borderRadius: 18,
         justifyContent: 'center',
         alignItems: 'center',
-        marginRight: 12,
     },
     swapButtonDisabled: {
         opacity: 0.4,

@@ -4,6 +4,8 @@ import Icon from '@/components/ui/Icon';
 import { formatAmount } from '../../utils/debtCalculations';
 import { useAppTheme } from '../../contexts/ThemeContext';
 import { useFormColors } from './FormParts';
+import { appStyles } from '@/utils/appStyles';
+import { BUTTON } from '@/constants/Theme';
 
 interface ConfirmDebtModalProps {
   visible: boolean;
@@ -71,13 +73,13 @@ const ConfirmDebtModal: React.FC<ConfirmDebtModalProps> = ({
                     style={[styles.row, index > 0 && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border }]}
                   >
                     <Text style={[styles.rowLabel, { color: colors.textSecondary, fontSize: 14 * textScale }]}>{row.label}</Text>
-                    <Text style={[styles.rowValue, { color: colors.text, fontSize: 15 * textScale }]} numberOfLines={2}>{row.value}</Text>
+                    <Text style={[styles.rowValue, { color: colors.text, fontSize: 16 * textScale }]} numberOfLines={2}>{row.value}</Text>
                   </View>
                 ))}
               </View>
 
               <View style={styles.amountRow}>
-                <Text style={[styles.rowLabel, { color: colors.textSecondary, fontSize: 15 * textScale }]}>{summary.amountLabel}</Text>
+                <Text style={[styles.rowLabel, { color: colors.textSecondary, fontSize: 16 * textScale }]}>{summary.amountLabel}</Text>
                 <Text style={[styles.amount, { color: colors.text, fontSize: 22 * textScale }]}>{amountText}</Text>
               </View>
 
@@ -110,7 +112,7 @@ const ConfirmDebtModal: React.FC<ConfirmDebtModalProps> = ({
   );
 };
 
-const styles = StyleSheet.create({
+const styles = appStyles({
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
@@ -170,10 +172,10 @@ const styles = StyleSheet.create({
   },
   button: {
     flex: 1,
-    minHeight: 52,
+    minHeight: BUTTON.height,
     justifyContent: 'center',
     alignItems: 'center',
-    borderRadius: 26,
+    borderRadius: BUTTON.radius,
   },
   buttonDisabled: {
     opacity: 0.5,
